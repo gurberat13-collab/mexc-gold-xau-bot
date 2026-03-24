@@ -1,105 +1,114 @@
 from __future__ import annotations
-
-from dataclasses import dataclass
 import pandas as pd
-
-from utils.indicators import atr, ema, macd, rsi
-
-
-@dataclass
-class Signal:
-    symbol: str
-    action: str
-    score: int
-    reason: str
-    atr_value: float
-    close_price: float
-    ema_fast: float
-    ema_slow: float
-    rsi_value: float
-    macd_hist: float
-    volume_ratio: float
-    breakout_up: bool
-    breakout_down: bool
+import numpy as np
 
 
-class StrategyEngine:
-    def __init__(self, config):
-        self.cfg = config
+def ensure_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col in ["open", "high", "low", "close", "vol"]:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out.dropna().reset_index(drop=True)
 
-    def analyze(self, symbol: str, df: pd.DataFrame) -> Signal:
-        d = df.copy()
-        d["ema_fast"] = ema(d["close"], 9)
-        d["ema_slow"] = ema(d["close"], 21)
-        d["rsi"] = rsi(d["close"], 14)
-        _, _, d["macd_hist"] = macd(d["close"])
-        d["atr"] = atr(d, self.cfg.atr_period)
-        d["vol_sma"] = d["volume"].rolling(20).mean()
 
-        latest = d.iloc[-1]
-        lookback = d.iloc[-(self.cfg.breakout_lookback + 1):-1]
+def ema(series: pd.Series, period: int) -> pd.Series:
+    return series.ewm(span=period, adjust=False).mean()
 
-        score = 0
-        reasons: list[str] = []
 
-        if latest["ema_fast"] > latest["ema_slow"]:
-            score += 1
-            reasons.append("EMA bullish")
-        elif latest["ema_fast"] < latest["ema_slow"]:
-            score -= 1
-            reasons.append("EMA bearish")
+def rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
 
-        if latest["rsi"] > 55:
-            score += 1
-            reasons.append("RSI strong")
-        elif latest["rsi"] < 45:
-            score -= 1
-            reasons.append("RSI weak")
+    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
 
-        if latest["macd_hist"] > 0:
-            score += 1
-            reasons.append("MACD positive")
-        elif latest["macd_hist"] < 0:
-            score -= 1
-            reasons.append("MACD negative")
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    out = 100 - (100 / (1 + rs))
+    return out.fillna(50)
 
-        volume_ratio = float(latest["volume"] / latest["vol_sma"]) if latest["vol_sma"] else 1.0
-        if volume_ratio > 1.2:
-            if latest["close"] >= latest["open"]:
-                score += 1
-                reasons.append("Bullish volume")
-            else:
-                score -= 1
-                reasons.append("Bearish volume")
 
-        breakout_up = float(latest["close"]) > float(lookback["high"].max()) if not lookback.empty else False
-        breakout_down = float(latest["close"]) < float(lookback["low"].min()) if not lookback.empty else False
+def macd_hist(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.Series:
+    fast_ema = ema(series, fast)
+    slow_ema = ema(series, slow)
+    macd_line = fast_ema - slow_ema
+    signal_line = ema(macd_line, signal)
+    hist = macd_line - signal_line
+    return hist
 
-        if breakout_up:
-            score += 1
-            reasons.append("Breakout up")
-        if breakout_down:
-            score -= 1
-            reasons.append("Breakout down")
 
-        action = "hold"
-        if score >= self.cfg.aggressive_score_threshold:
-            action = "long"
-        elif score <= -self.cfg.aggressive_score_threshold:
-            action = "short"
+def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
 
-        return Signal(
-            symbol=symbol,
-            action=action,
-            score=score,
-            reason=", ".join(reasons) if reasons else "No edge",
-            atr_value=float(latest["atr"]),
-            close_price=float(latest["close"]),
-            ema_fast=float(latest["ema_fast"]),
-            ema_slow=float(latest["ema_slow"]),
-            rsi_value=float(latest["rsi"]),
-            macd_hist=float(latest["macd_hist"]),
-            volume_ratio=volume_ratio,
-            breakout_up=breakout_up,
-            breakout_down=breakout_down,
-        )
+    prev_close = close.shift(1)
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return tr.rolling(period).mean().fillna(method="bfill")
+
+
+def bollinger_width(series: pd.Series, period: int = 20, std_mult: float = 2.0) -> pd.Series:
+    ma = series.rolling(period).mean()
+    std = series.rolling(period).std(ddof=0)
+    upper = ma + std * std_mult
+    lower = ma - std * std_mult
+    width = (upper - lower) / ma.replace(0, np.nan)
+    return width.fillna(0)
+
+
+def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
+
+    plus_dm = high.diff()
+    minus_dm = -low.diff()
+
+    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+
+    tr = pd.concat([
+        (high - low),
+        (high - close.shift(1)).abs(),
+        (low - close.shift(1)).abs()
+    ], axis=1).max(axis=1)
+
+    atr_val = tr.rolling(period).mean().replace(0, np.nan)
+    plus_di = 100 * (plus_dm.rolling(period).mean() / atr_val)
+    minus_di = 100 * (minus_dm.rolling(period).mean() / atr_val)
+
+    dx = ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)) * 100
+    return dx.rolling(period).mean().fillna(0)
+
+
+def candle_stats(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["body"] = (out["close"] - out["open"]).abs()
+    out["range"] = (out["high"] - out["low"]).replace(0, np.nan)
+    out["upper_wick"] = out["high"] - out[["open", "close"]].max(axis=1)
+    out["lower_wick"] = out[["open", "close"]].min(axis=1) - out["low"]
+    out["upper_wick_ratio"] = (out["upper_wick"] / out["range"]).fillna(0)
+    out["lower_wick_ratio"] = (out["lower_wick"] / out["range"]).fillna(0)
+    return out
+
+
+def add_indicators(
+    df: pd.DataFrame,
+    ema_fast_period: int,
+    ema_slow_period: int,
+    rsi_period: int,
+    atr_period: int,
+) -> pd.DataFrame:
+    out = ensure_numeric(df)
+    out["ema_fast"] = ema(out["close"], ema_fast_period)
+    out["ema_slow"] = ema(out["close"], ema_slow_period)
+    out["rsi"] = rsi(out["close"], rsi_period)
+    out["macd_hist"] = macd_hist(out["close"])
+    out["atr"] = atr(out, atr_period)
+    out["bb_width"] = bollinger_width(out["close"])
+    out["adx"] = adx(out)
+    out = candle_stats(out)
+    return out
