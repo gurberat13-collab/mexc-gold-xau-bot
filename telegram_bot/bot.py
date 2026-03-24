@@ -52,10 +52,10 @@ class TelegramController:
             await update.message.reply_text(f"Mevcut mod: {self.cfg.risk_mode.upper()}\nKullanım: /mod agresif veya /mod sakin")
             return
         arg = context.args[0].lower()
-        if arg in ('agresif', 'aggressive'):
-            self.cfg.risk_mode = 'aggressive'
-        elif arg in ('sakin', 'calm'):
-            self.cfg.risk_mode = 'calm'
+        if arg in ("agresif", "aggressive"):
+            self.cfg.risk_mode = "aggressive"
+        elif arg in ("sakin", "calm"):
+            self.cfg.risk_mode = "calm"
         else:
             await update.message.reply_text("Geçersiz mod. /mod agresif veya /mod sakin")
             return
@@ -140,26 +140,16 @@ class TelegramController:
             signal = self.strategy.analyze(symbol, df, df_htf)
 
             text = (
-                f"🧠 {symbol}\n"
-                f"Fiyat: {snapshot.last_price:.2f}\n"
-                f"Skor: {signal.score}\n"
-                f"Güven: {signal.confidence}/100\n"
-                f"Aksiyon: {signal.action.upper()}\n"
-                f"Rejim: {signal.regime} | Profil: {signal.profile}\n"
-                f"RSI: {signal.rsi_value:.2f}\n"
-                f"MACD Hist: {signal.macd_hist:.4f}\n"
-                f"ADX: {signal.adx_value:.2f}\n"
-                f"VWAP: {signal.vwap_value:.2f}\n"
-                f"Vol Ratio: {signal.volume_ratio:.2f}\n"
-                f"HTF Bias: {signal.htf_bias} | HTF SR: {signal.htf_sr_bias}\n"
-                f"Funding: {snapshot.funding_rate:.5f}\n"
-                f"Sebep: {signal.reason}"
+                f"🧠 {symbol}\nFiyat: {snapshot.last_price:.2f}\nSkor: {signal.score}\nGüven: {signal.confidence}/100\nAksiyon: {signal.action.upper()}\n"
+                f"Rejim: {signal.regime} | Profil: {signal.profile}\nRSI: {signal.rsi_value:.2f}\nMACD Hist: {signal.macd_hist:.4f}\n"
+                f"ADX: {signal.adx_value:.2f}\nVWAP: {signal.vwap_value:.2f}\nVol Ratio: {signal.volume_ratio:.2f}\n"
+                f"HTF Bias: {signal.htf_bias} | HTF SR: {signal.htf_sr_bias}\nFunding: {snapshot.funding_rate:.5f}\nSebep: {signal.reason}"
             )
             await update.message.reply_text(text)
 
         except requests.HTTPError as exc:
             code = exc.response.status_code if exc.response is not None else 'unknown'
-            await update.message.reply_text(f"❌ {symbol} analiz hatası: HTTPError {code}. Sembol kontrat listesinde yok olabilir veya servis değişti.")
+            await update.message.reply_text(f"❌ {symbol} analiz hatası: HTTPError {code}")
 
         except Exception as exc:
             await update.message.reply_text(f"❌ {symbol} analiz hatası: {exc}")

@@ -35,6 +35,7 @@ class MexcFuturesClient:
         return payload.get("data", payload)
 
     def _get_contract_symbols(self) -> list[str]:
+        """Get all available contract symbols from MEXC API."""
         data = self._get("/api/v1/contract/detail")
         symbols = []
         if isinstance(data, list):
@@ -49,6 +50,7 @@ class MexcFuturesClient:
         return symbols
 
     def _resolve_symbol(self, symbol: str) -> str | None:
+        """Resolve a symbol to its actual contract name on MEXC."""
         candidate = symbol.upper()
         if not candidate:
             return None
@@ -82,6 +84,7 @@ class MexcFuturesClient:
         return None
 
     def _get_with_symbol_fallback(self, path_template: str, symbol: str, params: dict[str, Any] | None = None) -> Any:
+        """Try API call with symbol, fall back to resolved symbol on 404."""
         try:
             return self._get(path_template.format(symbol=symbol), params=params)
         except requests.HTTPError as exc:
