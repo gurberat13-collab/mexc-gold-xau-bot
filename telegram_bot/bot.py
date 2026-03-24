@@ -143,23 +143,18 @@ class TelegramController:
         )
 
     async def analiz_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-<<<<<<< HEAD
         if not context.args:
             await update.message.reply_text("Kullanım: /analiz XAUT")
             return
 
         raw = context.args[0].upper().replace("USDT", "").replace("/", "").strip()
         symbol_alias = {
-=======
-        alias_map = {
->>>>>>> f657e539f3915fc9fb7757478b59d4812e4a5043
             "XAUT": "XAUT_USDT",
             "XAU": "XAUT_USDT",
             "GOLD": "XAUT_USDT",
             "NAS100": "NAS100_USDT",
             "NASDAQ": "NAS100_USDT",
         }
-<<<<<<< HEAD
         symbol = symbol_alias.get(raw, f"{raw}_USDT")
 
         try:
@@ -182,66 +177,6 @@ class TelegramController:
 
         except Exception as exc:
             await update.message.reply_text(f"❌ {symbol} analiz hatası: {exc}")
-=======
-
-        async def build_analysis_text(symbol: str) -> str:
-            df = self.client.get_klines(symbol, self.cfg.primary_timeframe, self.cfg.kline_limit)
-            df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, self.cfg.htf_kline_limit)
-            snapshot = self.client.get_ticker(symbol)
-
-            if df is None or df.empty:
-                return f"❌ {symbol} için kline verisi gelmedi."
-
-            if df_htf is None or df_htf.empty:
-                return f"❌ {symbol} için HTF kline verisi gelmedi."
-
-            signal = self.strategy.analyze(symbol, df, df_htf)
-
-            return (
-                f"🧠 {symbol}\n"
-                f"💵 Fiyat: {snapshot.last_price:.2f}\n"
-                f"🏆 Skor: {signal.score}\n"
-                f"🎯 Aksiyon: {signal.action.upper()}\n"
-                f"📡 Rejim: {signal.regime}\n"
-                f"🔥 Güven: {signal.confidence}/100\n"
-                f"📊 RSI: {signal.rsi_value:.2f}\n"
-                f"📉 MACD Hist: {signal.macd_hist:.4f}\n"
-                f"📈 ADX: {signal.adx_value:.2f}\n"
-                f"📍 VWAP: {signal.vwap_value:.2f}\n"
-                f"📦 Hacim Oranı: {signal.volume_ratio:.2f}\n"
-                f"🧭 HTF Bias: {signal.htf_bias}\n"
-                f"🧱 HTF SR Bias: {signal.htf_sr_bias}\n"
-                f"💸 Funding: {snapshot.funding_rate:.5f}\n"
-                f"📝 Sebep: {signal.reason}"
-            )
-
-        try:
-            if not context.args:
-                await update.message.reply_text("🔎 XAUT ve NAS100 analiz ediliyor...")
-
-                results = []
-                for symbol in ["XAUT_USDT", "NAS100_USDT"]:
-                    try:
-                        text = await build_analysis_text(symbol)
-                        results.append(text)
-                    except Exception as e:
-                        self.logger.exception("analiz_cmd batch error for %s", symbol)
-                        results.append(f"❌ {symbol} analiz hatası: {type(e).__name__}: {e}")
-
-                await update.message.reply_text("\n\n━━━━━━━━━━━━━━━━━━\n\n".join(results))
-                return
-
-            raw = context.args[0].upper().replace("USDT", "").replace("/", "").strip()
-            symbol = alias_map.get(raw, f"{raw}_USDT")
-
-            await update.message.reply_text(f"🔎 {symbol} analiz ediliyor...")
-            text = await build_analysis_text(symbol)
-            await update.message.reply_text(text)
-
-        except Exception as e:
-            self.logger.exception("analiz_cmd error")
-            await update.message.reply_text(f"❌ Analiz hatası: {type(e).__name__}: {e}")
->>>>>>> f657e539f3915fc9fb7757478b59d4812e4a5043
 
     async def aciklama_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self.wallet.open_position:
