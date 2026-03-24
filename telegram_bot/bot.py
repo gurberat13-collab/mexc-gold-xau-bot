@@ -33,7 +33,7 @@ class TelegramController:
             "🤖 MEXC Futures Paper Bot\n"
             "Komutlar:\n"
             "/baslat /durdur /durum /pozisyon /bakiye /gecmis\n"
-            "/analiz XAUT /analiz NAS100\n"
+            "/analiz /analiz XAUT /analiz NAS100\n"
             "/rapor /sonislem /aciklama /seans /riskayar /backtest XAUT\n"
             "/mod agresif veya /mod sakin"
         )
@@ -70,13 +70,22 @@ class TelegramController:
         summary = self.wallet.performance_summary()
         if pos:
             text = (
-                f"📊 Bot: {'AKTIF' if self.scanner.running else 'PASIF'}\nMod: {self.cfg.risk_mode.upper()}\n"
-                f"Açık Pozisyon: {pos['symbol']} {pos['side']}\nRejim: {pos.get('regime')} | Skor: {pos.get('score')}\n"
-                f"Giriş: {pos['entry_price']:.2f}\nSL: {pos['stop_loss']:.2f} | TP: {pos['take_profit']:.2f}\n"
-                f"Trailing: {'ACIK' if pos['trailing_active'] else 'BEKLIYOR'}\nWin rate: {summary['win_rate']:.1f}%"
+                f"📊 Bot: {'AKTIF' if self.scanner.running else 'PASIF'}\n"
+                f"Mod: {self.cfg.risk_mode.upper()}\n"
+                f"Açık Pozisyon: {pos['symbol']} {pos['side']}\n"
+                f"Rejim: {pos.get('regime')} | Skor: {pos.get('score')}\n"
+                f"Giriş: {pos['entry_price']:.2f}\n"
+                f"SL: {pos['stop_loss']:.2f} | TP: {pos['take_profit']:.2f}\n"
+                f"Trailing: {'ACIK' if pos['trailing_active'] else 'BEKLIYOR'}\n"
+                f"Win rate: {summary['win_rate']:.1f}%"
             )
         else:
-            text = f"📊 Bot: {'AKTIF' if self.scanner.running else 'PASIF'}\nMod: {self.cfg.risk_mode.upper()}\nAçık pozisyon yok.\nWin rate: {summary['win_rate']:.1f}%"
+            text = (
+                f"📊 Bot: {'AKTIF' if self.scanner.running else 'PASIF'}\n"
+                f"Mod: {self.cfg.risk_mode.upper()}\n"
+                f"Açık pozisyon yok.\n"
+                f"Win rate: {summary['win_rate']:.1f}%"
+            )
         await update.message.reply_text(text)
 
     async def pozisyon_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -85,9 +94,14 @@ class TelegramController:
             await update.message.reply_text("Açık pozisyon yok.")
             return
         text = (
-            f"📌 Pozisyon\n{pos['symbol']} {pos['side']}\nQty: {pos['quantity']:.6f}\nGiriş: {pos['entry_price']:.2f}\n"
-            f"SL: {pos['stop_loss']:.2f} | TP: {pos['take_profit']:.2f}\nPartial TP: {pos['partial_take_profit']:.2f}\n"
-            f"BE Trigger: {pos['break_even_trigger']:.2f}\nTrailing Stop: {pos['trailing_stop'] if pos['trailing_stop'] else 'Bekliyor'}\n"
+            f"📌 Pozisyon\n"
+            f"{pos['symbol']} {pos['side']}\n"
+            f"Qty: {pos['quantity']:.6f}\n"
+            f"Giriş: {pos['entry_price']:.2f}\n"
+            f"SL: {pos['stop_loss']:.2f} | TP: {pos['take_profit']:.2f}\n"
+            f"Partial TP: {pos['partial_take_profit']:.2f}\n"
+            f"BE Trigger: {pos['break_even_trigger']:.2f}\n"
+            f"Trailing Stop: {pos['trailing_stop'] if pos['trailing_stop'] else 'Bekliyor'}\n"
             f"Açılış: {pos['opened_at']}"
         )
         await update.message.reply_text(text)
@@ -95,8 +109,11 @@ class TelegramController:
     async def bakiye_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self.wallet.rollover_if_needed()
         text = (
-            f"💼 Sanal Cüzdan\nBakiye: {self.wallet.data['balance']:.2f} USDT\nEquity: {self.wallet.data['equity']:.2f} USDT\n"
-            f"Gerçekleşen PnL: {self.wallet.data['realized_pnl']:.2f} USDT\nGünlük PnL: {self.wallet.data['daily_realized_pnl']:.2f} USDT"
+            f"💼 Sanal Cüzdan\n"
+            f"Bakiye: {self.wallet.data['balance']:.2f} USDT\n"
+            f"Equity: {self.wallet.data['equity']:.2f} USDT\n"
+            f"Gerçekleşen PnL: {self.wallet.data['realized_pnl']:.2f} USDT\n"
+            f"Günlük PnL: {self.wallet.data['daily_realized_pnl']:.2f} USDT"
         )
         await update.message.reply_text(text)
 
@@ -116,21 +133,33 @@ class TelegramController:
             await update.message.reply_text("Henüz kapanmış işlem yok.")
             return
         t = history[0]
-        await update.message.reply_text(f"🧾 Son işlem\n{t['symbol']} {t['side']}\nÇıkış: {t['exit_reason']}\nNet PnL: {t['net_pnl']:.2f} USDT\nAçılış: {t['opened_at']}\nKapanış: {t['closed_at']}")
+        await update.message.reply_text(
+            f"🧾 Son işlem\n"
+            f"{t['symbol']} {t['side']}\n"
+            f"Çıkış: {t['exit_reason']}\n"
+            f"Net PnL: {t['net_pnl']:.2f} USDT\n"
+            f"Açılış: {t['opened_at']}\n"
+            f"Kapanış: {t['closed_at']}"
+        )
 
     async def analiz_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+<<<<<<< HEAD
         if not context.args:
             await update.message.reply_text("Kullanım: /analiz XAUT")
             return
 
         raw = context.args[0].upper().replace("USDT", "").replace("/", "").strip()
         symbol_alias = {
+=======
+        alias_map = {
+>>>>>>> f657e539f3915fc9fb7757478b59d4812e4a5043
             "XAUT": "XAUT_USDT",
             "XAU": "XAUT_USDT",
             "GOLD": "XAUT_USDT",
             "NAS100": "NAS100_USDT",
             "NASDAQ": "NAS100_USDT",
         }
+<<<<<<< HEAD
         symbol = symbol_alias.get(raw, f"{raw}_USDT")
 
         try:
@@ -153,47 +182,134 @@ class TelegramController:
 
         except Exception as exc:
             await update.message.reply_text(f"❌ {symbol} analiz hatası: {exc}")
+=======
+
+        async def build_analysis_text(symbol: str) -> str:
+            df = self.client.get_klines(symbol, self.cfg.primary_timeframe, self.cfg.kline_limit)
+            df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, self.cfg.htf_kline_limit)
+            snapshot = self.client.get_ticker(symbol)
+
+            if df is None or df.empty:
+                return f"❌ {symbol} için kline verisi gelmedi."
+
+            if df_htf is None or df_htf.empty:
+                return f"❌ {symbol} için HTF kline verisi gelmedi."
+
+            signal = self.strategy.analyze(symbol, df, df_htf)
+
+            return (
+                f"🧠 {symbol}\n"
+                f"💵 Fiyat: {snapshot.last_price:.2f}\n"
+                f"🏆 Skor: {signal.score}\n"
+                f"🎯 Aksiyon: {signal.action.upper()}\n"
+                f"📡 Rejim: {signal.regime}\n"
+                f"🔥 Güven: {signal.confidence}/100\n"
+                f"📊 RSI: {signal.rsi_value:.2f}\n"
+                f"📉 MACD Hist: {signal.macd_hist:.4f}\n"
+                f"📈 ADX: {signal.adx_value:.2f}\n"
+                f"📍 VWAP: {signal.vwap_value:.2f}\n"
+                f"📦 Hacim Oranı: {signal.volume_ratio:.2f}\n"
+                f"🧭 HTF Bias: {signal.htf_bias}\n"
+                f"🧱 HTF SR Bias: {signal.htf_sr_bias}\n"
+                f"💸 Funding: {snapshot.funding_rate:.5f}\n"
+                f"📝 Sebep: {signal.reason}"
+            )
+
+        try:
+            if not context.args:
+                await update.message.reply_text("🔎 XAUT ve NAS100 analiz ediliyor...")
+
+                results = []
+                for symbol in ["XAUT_USDT", "NAS100_USDT"]:
+                    try:
+                        text = await build_analysis_text(symbol)
+                        results.append(text)
+                    except Exception as e:
+                        self.logger.exception("analiz_cmd batch error for %s", symbol)
+                        results.append(f"❌ {symbol} analiz hatası: {type(e).__name__}: {e}")
+
+                await update.message.reply_text("\n\n━━━━━━━━━━━━━━━━━━\n\n".join(results))
+                return
+
+            raw = context.args[0].upper().replace("USDT", "").replace("/", "").strip()
+            symbol = alias_map.get(raw, f"{raw}_USDT")
+
+            await update.message.reply_text(f"🔎 {symbol} analiz ediliyor...")
+            text = await build_analysis_text(symbol)
+            await update.message.reply_text(text)
+
+        except Exception as e:
+            self.logger.exception("analiz_cmd error")
+            await update.message.reply_text(f"❌ Analiz hatası: {type(e).__name__}: {e}")
+>>>>>>> f657e539f3915fc9fb7757478b59d4812e4a5043
 
     async def aciklama_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self.wallet.open_position:
             await update.message.reply_text("Açık pozisyon yok. /analiz ile güncel sinyal sebeplerini görebilirsin.")
             return
         pos = self.wallet.open_position
-        await update.message.reply_text(f"📝 Pozisyon Açıklaması\n{pos['symbol']} {pos['side']}\nRejim: {pos.get('regime')}\nSkor: {pos.get('score')}\nSebep: {pos.get('reason')}")
+        await update.message.reply_text(
+            f"📝 Pozisyon Açıklaması\n"
+            f"{pos['symbol']} {pos['side']}\n"
+            f"Rejim: {pos.get('regime')}\n"
+            f"Skor: {pos.get('score')}\n"
+            f"Sebep: {pos.get('reason')}"
+        )
 
     async def rapor_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         stats = self.wallet.performance_summary()
-        by_symbol = stats.get('by_symbol', {})
-        symbol_text = '\n'.join([f"- {k}: {v:.2f} USDT" for k, v in by_symbol.items()]) if by_symbol else 'Yok'
+        by_symbol = stats.get("by_symbol", {})
+        symbol_text = "\n".join([f"- {k}: {v:.2f} USDT" for k, v in by_symbol.items()]) if by_symbol else "Yok"
         txt = (
-            f"📈 Rapor\nİşlem: {stats['trades']}\nKazanan: {stats['wins']}\nKaybeden: {stats['losses']}\n"
-            f"Win rate: {stats['win_rate']:.1f}%\nProfit factor: {stats['profit_factor']:.2f}\n"
-            f"Expectancy: {stats['expectancy']:.2f}\nAvg Win: {stats['avg_win']:.2f}\nAvg Loss: {stats['avg_loss']:.2f}\n"
-            f"Max DD: {stats['max_drawdown_pct']:.2f}%\nToplam PnL: {stats['realized_pnl']:.2f} USDT\n"
-            f"Günlük PnL: {stats['daily_realized_pnl']:.2f} USDT\nSembol Bazlı:\n{symbol_text}"
+            f"📈 Rapor\n"
+            f"İşlem: {stats['trades']}\n"
+            f"Kazanan: {stats['wins']}\n"
+            f"Kaybeden: {stats['losses']}\n"
+            f"Win rate: {stats['win_rate']:.1f}%\n"
+            f"Profit factor: {stats['profit_factor']:.2f}\n"
+            f"Expectancy: {stats['expectancy']:.2f}\n"
+            f"Avg Win: {stats['avg_win']:.2f}\n"
+            f"Avg Loss: {stats['avg_loss']:.2f}\n"
+            f"Max DD: {stats['max_drawdown_pct']:.2f}%\n"
+            f"Toplam PnL: {stats['realized_pnl']:.2f} USDT\n"
+            f"Günlük PnL: {stats['daily_realized_pnl']:.2f} USDT\n"
+            f"Sembol Bazlı:\n{symbol_text}"
         )
         await update.message.reply_text(txt)
 
     async def seans_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
-            f"🕒 Seanslar (UTC)\nXAUT: {self.cfg.xaut_session_utc} | Prefer: {self.cfg.xaut_preferred_hours}\n"
+            f"🕒 Seanslar (UTC)\n"
+            f"XAUT: {self.cfg.xaut_session_utc} | Prefer: {self.cfg.xaut_preferred_hours}\n"
             f"NAS100: {self.cfg.nas100_session_utc} | Prefer: {self.cfg.nas100_preferred_hours}\n"
-            f"Session max trades: {self.cfg.session_max_trades}\nNews filter: {'AÇIK' if self.cfg.use_news_filter else 'KAPALI'} ({self.cfg.news_blackout_hours_utc})"
+            f"Session max trades: {self.cfg.session_max_trades}\n"
+            f"News filter: {'AÇIK' if self.cfg.use_news_filter else 'KAPALI'} ({self.cfg.news_blackout_hours_utc})"
         )
 
     async def riskayar_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = (
-            f"⚙️ Risk Ayarları\nMod: {self.cfg.risk_mode.upper()}\nKaldıraç: {self.cfg.leverage}x\nRisk/işlem: %{self.cfg.risk_per_trade*100:.1f}\n"
-            f"Günlük zarar limiti: %{self.cfg.daily_loss_limit_pct*100:.1f}\nBE R: {self.cfg.break_even_r}\n"
-            f"Partial TP R: {self.cfg.partial_tp_r}\nTrailing gap: %{self.cfg.trailing_gap_pct*100:.2f}\n"
-            f"Time stop: {self.cfg.time_stop_minutes} dk\nConfidence min: {self.cfg.mode_confidence_min()}\nThreshold: {self.cfg.mode_threshold()}"
+            f"⚙️ Risk Ayarları\n"
+            f"Mod: {self.cfg.risk_mode.upper()}\n"
+            f"Kaldıraç: {self.cfg.leverage}x\n"
+            f"Risk/işlem: %{self.cfg.risk_per_trade*100:.1f}\n"
+            f"Günlük zarar limiti: %{self.cfg.daily_loss_limit_pct*100:.1f}\n"
+            f"BE R: {self.cfg.break_even_r}\n"
+            f"Partial TP R: {self.cfg.partial_tp_r}\n"
+            f"Trailing gap: %{self.cfg.trailing_gap_pct*100:.2f}\n"
+            f"Time stop: {self.cfg.time_stop_minutes} dk\n"
+            f"Confidence min: {self.cfg.mode_confidence_min()}\n"
+            f"Threshold: {self.cfg.mode_threshold()}"
         )
         await update.message.reply_text(text)
 
     async def ayar_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = (
-            f"⚙️ Ayarlar\nMod: {self.cfg.risk_mode.upper()}\nKaldıraç: {self.cfg.leverage}x\nRisk/işlem: %{self.cfg.risk_per_trade*100:.1f}\n"
-            f"Tarama aralığı: {self.cfg.scan_interval_seconds}s\nTF: {self.cfg.primary_timeframe}/{self.cfg.htf_timeframe}\n"
+            f"⚙️ Ayarlar\n"
+            f"Mod: {self.cfg.risk_mode.upper()}\n"
+            f"Kaldıraç: {self.cfg.leverage}x\n"
+            f"Risk/işlem: %{self.cfg.risk_per_trade*100:.1f}\n"
+            f"Tarama aralığı: {self.cfg.scan_interval_seconds}s\n"
+            f"TF: {self.cfg.primary_timeframe}/{self.cfg.htf_timeframe}\n"
             f"Semboller: {', '.join(self.cfg.symbols)}"
         )
         await update.message.reply_text(text)
@@ -215,22 +331,34 @@ class TelegramController:
         df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, 300)
         wins = losses = holds = 0
         pnl = 0.0
-        for i in range(80, len(df)-4):
-            signal = self.strategy.analyze(symbol, df.iloc[:i].copy(), df_htf.iloc[: max(60, min(len(df_htf), i//4 + 60))].copy())
-            if signal.action == 'hold':
+        for i in range(80, len(df) - 4):
+            signal = self.strategy.analyze(
+                symbol,
+                df.iloc[:i].copy(),
+                df_htf.iloc[: max(60, min(len(df_htf), i // 4 + 60))].copy(),
+            )
+            if signal.action == "hold":
                 holds += 1
                 continue
-            entry = float(df.iloc[i]['close'])
-            future = df.iloc[i+1:i+5]
-            exit_price = float(future.iloc[-1]['close'])
-            trade_pnl = (exit_price - entry) if signal.action == 'long' else (entry - exit_price)
+            entry = float(df.iloc[i]["close"])
+            future = df.iloc[i + 1:i + 5]
+            exit_price = float(future.iloc[-1]["close"])
+            trade_pnl = (exit_price - entry) if signal.action == "long" else (entry - exit_price)
             pnl += trade_pnl
             if trade_pnl > 0:
                 wins += 1
             else:
                 losses += 1
         total = wins + losses
-        await update.message.reply_text(f"🧪 Mini Backtest {symbol}\nTrade: {total}\nWin: {wins}\nLoss: {losses}\nHold: {holds}\nHam PnL puanı: {pnl:.2f}\nNot: Bu hızlı doğrulama testidir, tam backtest değildir.")
+        await update.message.reply_text(
+            f"🧪 Mini Backtest {symbol}\n"
+            f"Trade: {total}\n"
+            f"Win: {wins}\n"
+            f"Loss: {losses}\n"
+            f"Hold: {holds}\n"
+            f"Ham PnL puanı: {pnl:.2f}\n"
+            f"Not: Bu hızlı doğrulama testidir, tam backtest değildir."
+        )
 
     async def start_polling(self) -> None:
         await self.app.initialize()
