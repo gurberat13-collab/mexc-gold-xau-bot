@@ -143,11 +143,6 @@ class TelegramController:
         )
 
     async def analiz_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not context.args:
-            await update.message.reply_text("Kullanım: /analiz XAUT")
-            return
-
-        raw = context.args[0].upper().replace("USDT", "").replace("/", "").strip()
         symbol_alias = {
             "XAUT": "XAUT_USDT",
             "XAU": "XAUT_USDT",
@@ -155,28 +150,39 @@ class TelegramController:
             "NAS100": "NAS100_USDT",
             "NASDAQ": "NAS100_USDT",
         }
-        symbol = symbol_alias.get(raw, f"{raw}_USDT")
 
-        try:
-            df = self.client.get_klines(symbol, self.cfg.primary_timeframe, self.cfg.kline_limit)
-            df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, self.cfg.htf_kline_limit)
-            snapshot = self.client.get_ticker(symbol)
-            signal = self.strategy.analyze(symbol, df, df_htf)
+        # Eğer argüman yoksa her iki sembolü analiz et
+        if not context.args:
+            symbols = ["XAUT_USDT", "NAS100_USDT"]
+        else:
+            raw = context.args[0].upper().replace("USDT", "").replace("/", "").strip()
+            symbol = symbol_alias.get(raw, f"{raw}_USDT")
+            symbols = [symbol]
 
-            text = (
-                f"🧠 {symbol}\nFiyat: {snapshot.last_price:.2f}\nSkor: {signal.score}\nGüven: {signal.confidence}/100\nAksiyon: {signal.action.upper()}\n"
-                f"Rejim: {signal.regime} | Profil: {signal.profile}\nRSI: {signal.rsi_value:.2f}\nMACD Hist: {signal.macd_hist:.4f}\n"
-                f"ADX: {signal.adx_value:.2f}\nVWAP: {signal.vwap_value:.2f}\nVol Ratio: {signal.volume_ratio:.2f}\n"
-                f"HTF Bias: {signal.htf_bias} | HTF SR: {signal.htf_sr_bias}\nFunding: {snapshot.funding_rate:.5f}\nSebep: {signal.reason}"
-            )
-            await update.message.reply_text(text)
+        results = []
+        for symbol in symbols:
+            try:
+                df = self.client.get_klines(symbol, self.cfg.primary_timeframe, self.cfg.kline_limit)
+                df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, self.cfg.htf_kline_limit)
+                snapshot = self.client.get_ticker(symbol)
+                signal = self.strategy.analyze(symbol, df, df_htf)
 
-        except requests.HTTPError as exc:
-            code = exc.response.status_code if exc.response is not None else 'unknown'
-            await update.message.reply_text(f"❌ {symbol} analiz hatası: HTTPError {code}")
+                text = (
+                    f"🧠 {symbol}\nFiyat: {snapshot.last_price:.2f}\nSkor: {signal.score}\nGüven: {signal.confidence}/100\nAksiyon: {signal.action.upper()}\n"
+                    f"Rejim: {signal.regime} | Profil: {signal.profile}\nRSI: {signal.rsi_value:.2f}\nMACD Hist: {signal.macd_hist:.4f}\n"
+                    f"ADX: {signal.adx_value:.2f}\nVWAP: {signal.vwap_value:.2f}\nVol Ratio: {signal.volume_ratio:.2f}\n"
+                    f"HTF Bias: {signal.htf_bias} | HTF SR: {signal.htf_sr_bias}\nFunding: {snapshot.funding_rate:.5f}\nSebep: {signal.reason}"
+                )
+                results.append(text)
 
-        except Exception as exc:
-            await update.message.reply_text(f"❌ {symbol} analiz hatası: {exc}")
+            except requests.HTTPError as exc:
+                code = exc.response.status_code if exc.response is not None else 'unknown'
+                results.append(f"❌ {symbol} analiz hatası: HTTPError {code}")
+
+            except Exception as exc:
+                results.append(f"❌ {symbol} analiz hatası: {exc}")
+
+        await update.message.reply_text("\n\n━━━━━━━━━━━━━━━━━━\n\n".join(results))
 
     async def aciklama_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self.wallet.open_position:
