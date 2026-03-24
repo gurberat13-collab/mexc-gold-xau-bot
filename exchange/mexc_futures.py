@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -84,8 +85,12 @@ class MexcFuturesClient:
             "NAS100": "NAS100",
         }
         resolved = fallback_map.get(candidate)
-        if resolved and resolved in symbols:
-            return resolved
+        if resolved:
+            if resolved in symbols:
+                return resolved
+            resolved_long = f"{resolved}_USDT"
+            if resolved_long in symbols:
+                return resolved_long
 
         # Try fuzzy match
         for s in symbols:
@@ -98,47 +103,61 @@ class MexcFuturesClient:
         
         return candidate  # Return as-is, let API decide
 
-    def _get_with_symbol_fallback(self, path_template: str, symbol: str, params: dict[str, Any] | None = None) -> Any:
-        """Try API call with symbol, fall back to alternative formats on 404."""
-        failed_symbols = set()
-        
-        # Try original symbol first
-        try:
-            return self._get(path_template.format(symbol=symbol), params=params)
-        except requests.HTTPError as exc:
-            if exc.response is not None and exc.response.status_code == 404:
-                failed_symbols.add(symbol)
+    def _symbol_candidates(self, symbol: str) -> list[str]:
+        candidate = symbol.upper().strip()
+        if not candidate:
+            return []
+
+        candidates: list[str] = []
+        seen: set[str] = set()
+
+        def add(value: str | None) -> None:
+            if not value:
+                return
+            normalized = value.upper().strip()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                candidates.append(normalized)
+
+        add(candidate)
+        if candidate.endswith("_USDT"):
+            add(candidate[:-5])
+        else:
+            add(f"{candidate}_USDT")
+
+        resolved = self._resolve_symbol(candidate)
+        add(resolved)
+        if resolved:
+            if resolved.endswith("_USDT"):
+                add(resolved[:-5])
             else:
+                add(f"{resolved}_USDT")
+
+        return candidates
+
+    def _request_with_symbol_fallback(self, symbol: str, fetcher: Callable[[str], Any]) -> Any:
+        last_exc: requests.HTTPError | None = None
+
+        for candidate in self._symbol_candidates(symbol):
+            try:
+                return fetcher(candidate)
+            except requests.HTTPError as exc:
+                last_exc = exc
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code == 404:
+                    continue
                 raise
 
-        # Try without _USDT
-        if symbol.endswith("_USDT"):
-            alt_symbol = symbol[:-5]
-            if alt_symbol != symbol and alt_symbol not in failed_symbols:
-                try:
-                    return self._get(path_template.format(symbol=alt_symbol), params=params)
-                except requests.HTTPError:
-                    failed_symbols.add(alt_symbol)
+        if last_exc is not None:
+            raise last_exc
+        raise ValueError(f"Unable to resolve contract symbol for {symbol}")
 
-        # Try with _USDT
-        if not symbol.endswith("_USDT"):
-            alt_symbol = f"{symbol}_USDT"
-            if alt_symbol not in failed_symbols:
-                try:
-                    return self._get(path_template.format(symbol=alt_symbol), params=params)
-                except requests.HTTPError:
-                    failed_symbols.add(alt_symbol)
-
-        # Last resort: use resolver
-        resolved = self._resolve_symbol(symbol)
-        if resolved and resolved not in failed_symbols:
-            try:
-                return self._get(path_template.format(symbol=resolved), params=params)
-            except requests.HTTPError:
-                pass
-
-        # If all failed, raise 404 for the original symbol
-        raise requests.HTTPError(f"404 Client Error: Not Found for url: {path_template.format(symbol=symbol)}")
+    def _get_with_symbol_fallback(self, path_template: str, symbol: str, params: dict[str, Any] | None = None) -> Any:
+        """Try API call with symbol, fall back to alternative formats on 404."""
+        return self._request_with_symbol_fallback(
+            symbol,
+            lambda candidate: self._get(path_template.format(symbol=candidate), params=params),
+        )
 
     def get_contract_info(self, symbol: str) -> dict[str, Any]:
         data = self._get("/api/v1/contract/detail")
@@ -156,7 +175,10 @@ class MexcFuturesClient:
         if resolved:
             symbol = resolved
         
-        data = self._get_with_symbol_fallback("/api/v1/contract/ticker/{symbol}", symbol)
+        data = self._request_with_symbol_fallback(
+            symbol,
+            lambda candidate: self._get("/api/v1/contract/ticker", params={"symbol": candidate}),
+        )
         last_price = float(data.get("lastPrice", data.get("last_price", 0)))
         bid = float(data.get("bid1", last_price))
         ask = float(data.get("ask1", last_price))
