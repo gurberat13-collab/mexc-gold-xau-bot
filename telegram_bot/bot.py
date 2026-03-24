@@ -30,7 +30,7 @@ class TelegramController:
         text = (
             "🤖 MEXC Futures Paper Bot\n"
             "Komutlar:\n"
-            "/baslat\n/durdur\n/durum\n/bakiye\n/gecmis\n/analiz BTC\n/ayar"
+            "/baslat\n/durdur\n/durum\n/bakiye\n/gecmis\n/analiz XAUT\n/analiz NAS100\n/ayar"
         )
         await update.message.reply_text(text)
 
@@ -74,30 +74,36 @@ class TelegramController:
             return
         lines = ["🧾 Son İşlemler"]
         for trade in history:
-            lines.append(
-                f"{trade['symbol']} {trade['side']} | {trade['exit_reason']} | {trade['net_pnl']:.2f} USDT"
-            )
+            lines.append(f"{trade['symbol']} {trade['side']} | {trade['exit_reason']} | {trade['net_pnl']:.2f} USDT")
         await update.message.reply_text("\n".join(lines))
 
     async def analiz_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not context.args:
-            await update.message.reply_text("Kullanım: /analiz BTC")
+            await update.message.reply_text("Kullanım: /analiz XAUT")
             return
-        raw = context.args[0].upper().replace("USDT", "")
-        symbol = f"{raw}_USDT"
-        df = self.client.get_klines(symbol, self.cfg.timeframe, self.cfg.kline_limit)
+        raw = context.args[0].upper().replace("USDT", "").replace("_", "")
+        mapping = {"XAUT": "XAUT_USDT", "NAS100": "NAS100_USDT"}
+        symbol = mapping.get(raw, f"{raw}_USDT")
+        df = self.client.get_klines(symbol, self.cfg.primary_timeframe, self.cfg.primary_limit)
+        df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, self.cfg.htf_limit)
         snapshot = self.client.get_ticker(symbol)
-        signal = self.strategy.analyze(symbol, df)
+        signal = self.strategy.analyze(symbol, df, df_htf)
         text = (
-            f"🧠 {symbol}\n"
-            f"Fiyat: {snapshot.last_price:.2f}\n"
-            f"Skor: {signal.score}\n"
-            f"Aksiyon: {signal.action.upper()}\n"
-            f"RSI: {signal.rsi_value:.2f}\n"
-            f"MACD Hist: {signal.macd_hist:.4f}\n"
-            f"Vol Ratio: {signal.volume_ratio:.2f}\n"
-            f"Funding: {snapshot.funding_rate:.5f}\n"
-            f"Sebep: {signal.reason}"
+            f"🧠 {symbol} analiz\n━━━━━━━━━━━━━━━━━━\n"
+            f"💵 Fiyat: {snapshot.last_price:.2f}\n"
+            f"📡 Rejim: {signal.regime}\n"
+            f"🏆 Skor: {signal.score}\n"
+            f"🎯 Karar: {signal.action.upper()}\n\n"
+            f"Nedenler:\n"
+            f"- EMA: {signal.reasons.get('ema')}\n"
+            f"- RSI: {signal.reasons.get('rsi')}\n"
+            f"- MACD: {signal.reasons.get('macd')}\n"
+            f"- Volume: {signal.reasons.get('volume')}\n"
+            f"- Breakout: {signal.reasons.get('breakout')}\n"
+            f"- HTF Bias: {signal.reasons.get('htf_bias')}\n"
+            f"- Fake Breakout: {signal.reasons.get('fake_breakout', 'ok')}\n\n"
+            f"ATR: {signal.atr_value:.2f}\n"
+            f"Funding: {snapshot.funding_rate:.5f}"
         )
         await update.message.reply_text(text)
 
@@ -108,6 +114,7 @@ class TelegramController:
             f"Risk/işlem: %{self.cfg.risk_per_trade * 100:.1f}\n"
             f"Günlük zarar limiti: %{self.cfg.daily_loss_limit_pct * 100:.1f}\n"
             f"Tarama aralığı: {self.cfg.scan_interval_seconds}s\n"
+            f"Ana TF: {self.cfg.primary_timeframe} | HTF: {self.cfg.htf_timeframe}\n"
             f"Semboller: {', '.join(self.cfg.symbols)}"
         )
         await update.message.reply_text(text)

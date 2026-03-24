@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 
 class ScannerEngine:
@@ -55,22 +54,15 @@ class ScannerEngine:
                 await self.notifier(msg)
             return
 
-        if not self.running:
-            return
-        if self.in_cooldown():
-            return
-        if self.risk.daily_loss_breached(self.wallet):
-            return
-        if self.risk.consecutive_losses_breached(self.wallet):
-            return
-        if not self.wallet.can_open_new_trade(self.cfg.max_open_positions, self.cfg.max_trades_per_day):
+        if not self.running or self.in_cooldown() or self.risk.daily_loss_breached(self.wallet) or self.risk.consecutive_losses_breached(self.wallet) or not self.wallet.can_open_new_trade(self.cfg.max_open_positions, self.cfg.max_trades_per_day):
             return
 
         best_signal = None
         best_snapshot = None
 
         for symbol in self.cfg.symbols:
-            df = self.client.get_klines(symbol, self.cfg.timeframe, self.cfg.kline_limit)
+            df_primary = self.client.get_klines(symbol, self.cfg.primary_timeframe, self.cfg.primary_limit)
+            df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, self.cfg.htf_limit)
             snapshot = self.client.get_ticker(symbol)
 
             if abs(snapshot.funding_rate) > self.cfg.funding_abs_limit:
@@ -78,11 +70,7 @@ class ScannerEngine:
             if snapshot.spread_pct > self.cfg.max_spread_pct:
                 continue
 
-            last_candle_pct = abs((df.iloc[-1]["close"] - df.iloc[-1]["open"]) / df.iloc[-1]["open"])
-            if last_candle_pct > self.cfg.max_last_candle_pct:
-                continue
-
-            signal = self.strategy.analyze(symbol, df)
+            signal = self.strategy.analyze(symbol, df_primary, df_htf)
             if signal.action == "hold":
                 continue
             if best_signal is None or abs(signal.score) > abs(best_signal.score):
@@ -97,19 +85,14 @@ class ScannerEngine:
                 atr_value=best_signal.atr_value,
                 wallet_balance=self.wallet.balance,
             )
-            opened = self.executor.open_position(
-                best_signal.symbol,
-                best_signal.action,
-                best_snapshot.last_price,
-                plan,
-                best_signal.reason,
-            )
+            opened = self.executor.open_position(best_signal.symbol, best_signal.action, best_snapshot.last_price, plan, best_signal.reason)
             self.last_trade_time = datetime.now(timezone.utc)
             msg = (
                 f"🚀 Yeni pozisyon açıldı\n"
                 f"{opened['symbol']} {opened['side']} {opened['quantity']}\n"
                 f"Giriş: {opened['entry_price']:.2f}\n"
                 f"SL: {opened['stop_loss']:.2f} | TP: {opened['take_profit']:.2f}\n"
+                f"Rejim: {best_signal.regime} | HTF Bias: {best_signal.htf_bias}\n"
                 f"Skor: {best_signal.score} | Sebep: {best_signal.reason}"
             )
             self.logger.info(msg.replace("\n", " | "))
