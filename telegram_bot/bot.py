@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -121,19 +122,47 @@ class TelegramController:
         if not context.args:
             await update.message.reply_text("Kullanım: /analiz XAUT")
             return
-        raw = context.args[0].upper().replace("USDT", "")
-        symbol = f"{raw}_USDT"
-        df = self.client.get_klines(symbol, self.cfg.primary_timeframe, self.cfg.kline_limit)
-        df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, self.cfg.htf_kline_limit)
-        snapshot = self.client.get_ticker(symbol)
-        signal = self.strategy.analyze(symbol, df, df_htf)
-        text = (
-            f"🧠 {symbol}\nFiyat: {snapshot.last_price:.2f}\nSkor: {signal.score}\nGüven: {signal.confidence}/100\nAksiyon: {signal.action.upper()}\n"
-            f"Rejim: {signal.regime} | Profil: {signal.profile}\nRSI: {signal.rsi_value:.2f}\nMACD Hist: {signal.macd_hist:.4f}\n"
-            f"ADX: {signal.adx_value:.2f}\nVWAP: {signal.vwap_value:.2f}\nVol Ratio: {signal.volume_ratio:.2f}\n"
-            f"HTF Bias: {signal.htf_bias} | HTF SR: {signal.htf_sr_bias}\nFunding: {snapshot.funding_rate:.5f}\nSebep: {signal.reason}"
-        )
-        await update.message.reply_text(text)
+
+        raw = context.args[0].upper().replace("USDT", "").replace("/", "").strip()
+        symbol_alias = {
+            "XAUT": "XAUT_USDT",
+            "XAU": "XAUT_USDT",
+            "GOLD": "XAUT_USDT",
+            "NAS100": "NAS100_USDT",
+            "NASDAQ": "NAS100_USDT",
+        }
+        symbol = symbol_alias.get(raw, f"{raw}_USDT")
+
+        try:
+            df = self.client.get_klines(symbol, self.cfg.primary_timeframe, self.cfg.kline_limit)
+            df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, self.cfg.htf_kline_limit)
+            snapshot = self.client.get_ticker(symbol)
+            signal = self.strategy.analyze(symbol, df, df_htf)
+
+            text = (
+                f"🧠 {symbol}\n"
+                f"Fiyat: {snapshot.last_price:.2f}\n"
+                f"Skor: {signal.score}\n"
+                f"Güven: {signal.confidence}/100\n"
+                f"Aksiyon: {signal.action.upper()}\n"
+                f"Rejim: {signal.regime} | Profil: {signal.profile}\n"
+                f"RSI: {signal.rsi_value:.2f}\n"
+                f"MACD Hist: {signal.macd_hist:.4f}\n"
+                f"ADX: {signal.adx_value:.2f}\n"
+                f"VWAP: {signal.vwap_value:.2f}\n"
+                f"Vol Ratio: {signal.volume_ratio:.2f}\n"
+                f"HTF Bias: {signal.htf_bias} | HTF SR: {signal.htf_sr_bias}\n"
+                f"Funding: {snapshot.funding_rate:.5f}\n"
+                f"Sebep: {signal.reason}"
+            )
+            await update.message.reply_text(text)
+
+        except requests.HTTPError as exc:
+            code = exc.response.status_code if exc.response is not None else 'unknown'
+            await update.message.reply_text(f"❌ {symbol} analiz hatası: HTTPError {code}. Sembol kontrat listesinde yok olabilir veya servis değişti.")
+
+        except Exception as exc:
+            await update.message.reply_text(f"❌ {symbol} analiz hatası: {exc}")
 
     async def aciklama_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self.wallet.open_position:
