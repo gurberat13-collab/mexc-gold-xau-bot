@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict
+from dataclasses import dataclass, asdict
 import pandas as pd
 
-from utils.indicators import add_indicators
+from utils.indicators import atr, ema, macd, rsi, adx, vwap
 
 
 @dataclass
@@ -12,7 +11,10 @@ class Signal:
     symbol: str
     action: str
     score: int
+    confidence: int
+    regime: str
     reason: str
+    profile: str
     atr_value: float
     close_price: float
     ema_fast: float
@@ -22,184 +24,199 @@ class Signal:
     volume_ratio: float
     breakout_up: bool
     breakout_down: bool
-    regime: str
+    adx_value: float
+    vwap_value: float
     htf_bias: int
-    reasons: Dict[str, Any]
+    htf_sr_bias: int
+
+    def to_dict(self):
+        return asdict(self)
 
 
 class StrategyEngine:
     def __init__(self, config):
         self.cfg = config
 
-    def detect_regime(self, df: pd.DataFrame) -> str:
-        last = df.iloc[-1]
-        adx_val = float(last["adx"])
-        bb_width = float(last["bb_width"])
-        atr_val = float(last["atr"])
-        close = float(last["close"])
-        atr_pct = atr_val / close if close else 0
-        if adx_val >= self.cfg.regime_adx_threshold:
-            return "trend"
-        if bb_width <= self.cfg.regime_bb_width_threshold and atr_pct < 0.012:
-            return "range"
-        return "volatile"
+    def _prep(self, df: pd.DataFrame) -> pd.DataFrame:
+        d = df.copy()
+        d["ema_fast"] = ema(d["close"], 9)
+        d["ema_slow"] = ema(d["close"], 21)
+        d["rsi"] = rsi(d["close"], 14)
+        _, _, d["macd_hist"] = macd(d["close"])
+        d["atr"] = atr(d, self.cfg.atr_period)
+        d["vol_sma"] = d["volume"].rolling(20).mean()
+        d["adx"] = adx(d, 14)
+        d["vwap"] = vwap(d).bfill()
+        d["body"] = (d["close"] - d["open"]).abs()
+        d["range"] = (d["high"] - d["low"]).replace(0, 1e-9)
+        d["upper_wick"] = d["high"] - d[["open", "close"]].max(axis=1)
+        d["lower_wick"] = d[["open", "close"]].min(axis=1) - d["low"]
+        d["upper_wick_ratio"] = d["upper_wick"] / d["range"]
+        d["lower_wick_ratio"] = d["lower_wick"] / d["range"]
+        return d
 
-    def htf_bias(self, df_htf: pd.DataFrame) -> int:
-        last = df_htf.iloc[-1]
-        score = 0
-        if last["ema_fast"] > last["ema_slow"]:
-            score += 1
-        elif last["ema_fast"] < last["ema_slow"]:
-            score -= 1
-        if last["rsi"] > 55:
-            score += 1
-        elif last["rsi"] < 45:
-            score -= 1
-        if last["macd_hist"] > 0:
-            score += 1
-        elif last["macd_hist"] < 0:
-            score -= 1
-        return score
-
-    def fake_breakout_filter(self, df: pd.DataFrame, direction: str) -> bool:
-        last = df.iloc[-1]
-        prev_high = df["high"].iloc[-(self.cfg.breakout_lookback + 1):-1].max()
-        prev_low = df["low"].iloc[-(self.cfg.breakout_lookback + 1):-1].min()
-        if direction == "long":
-            broke = last["high"] > prev_high
-            closed_back_inside = last["close"] < prev_high
-            bad_wick = last["upper_wick_ratio"] >= self.cfg.fake_breakout_wick_ratio
-            return bool(broke and (closed_back_inside or bad_wick))
-        if direction == "short":
-            broke = last["low"] < prev_low
-            closed_back_inside = last["close"] > prev_low
-            bad_wick = last["lower_wick_ratio"] >= self.cfg.fake_breakout_wick_ratio
-            return bool(broke and (closed_back_inside or bad_wick))
-        return False
-
-    def breakout_score(self, df: pd.DataFrame) -> tuple[int, bool, bool]:
-        prev_high = df["high"].iloc[-(self.cfg.breakout_lookback + 1):-1].max()
-        prev_low = df["low"].iloc[-(self.cfg.breakout_lookback + 1):-1].min()
-        last = df.iloc[-1]
-        breakout_up = bool(last["close"] > prev_high)
-        breakout_down = bool(last["close"] < prev_low)
-        if breakout_up:
-            return 1, True, False
-        if breakout_down:
-            return -1, False, True
-        return 0, False, False
-
-    def volume_score(self, df: pd.DataFrame) -> tuple[int, float]:
-        last = df.iloc[-1]
-        avg_vol = df["vol"].iloc[-21:-1].mean()
-        if avg_vol <= 0:
-            return 0, 1.0
-        ratio = float(last["vol"] / avg_vol)
-        if ratio < self.cfg.volume_spike_threshold:
-            return 0, ratio
-        if last["close"] > last["open"]:
-            return 1, ratio
-        if last["close"] < last["open"]:
-            return -1, ratio
-        return 0, ratio
-
-    def last_candle_too_extended(self, df: pd.DataFrame) -> bool:
-        last = df.iloc[-1]
-        atr_val = float(last["atr"])
-        if atr_val <= 0:
-            return False
-        return float(last["range"] / atr_val) > self.cfg.max_last_candle_range_atr
+    def _profile(self, symbol: str) -> str:
+        return "macro-index" if symbol.startswith("NAS100") else "macro-gold"
 
     def analyze(self, symbol: str, df: pd.DataFrame, df_htf: pd.DataFrame | None = None) -> Signal:
-        if df_htf is None:
-            df_htf = df.copy()
-        d = add_indicators(df, 9, 21, 14, self.cfg.atr_period)
-        h = add_indicators(df_htf, 9, 21, 14, self.cfg.atr_period)
-        if len(d) < 60 or len(h) < 60:
-            price = float(d["close"].iloc[-1]) if len(d) else 0.0
-            return Signal(symbol, "hold", 0, "not enough data", 0.0, price, 0.0, 0.0, 50.0, 0.0, 1.0, False, False, "insufficient_data", 0, {"error": "not enough data"})
-
+        d = self._prep(df)
+        h = self._prep(df_htf) if df_htf is not None and len(df_htf) > 30 else None
         latest = d.iloc[-1]
+        lookback = d.iloc[-(self.cfg.breakout_lookback + 1):-1]
         score = 0
-        reasons: Dict[str, Any] = {}
+        confidence = 50
+        reasons: list[str] = []
+        profile = self._profile(symbol)
 
         if latest["ema_fast"] > latest["ema_slow"]:
             score += 1
-            reasons["ema"] = "bullish"
+            confidence += 6
+            reasons.append("EMA bullish")
         elif latest["ema_fast"] < latest["ema_slow"]:
             score -= 1
-            reasons["ema"] = "bearish"
-        else:
-            reasons["ema"] = "neutral"
+            confidence += 6
+            reasons.append("EMA bearish")
 
-        if latest["rsi"] > 55:
+        if latest["rsi"] > 57:
             score += 1
-            reasons["rsi"] = f"bullish ({latest['rsi']:.2f})"
-        elif latest["rsi"] < 45:
+            confidence += 5
+            reasons.append("RSI strong")
+        elif latest["rsi"] < 43:
             score -= 1
-            reasons["rsi"] = f"bearish ({latest['rsi']:.2f})"
-        else:
-            reasons["rsi"] = f"neutral ({latest['rsi']:.2f})"
+            confidence += 5
+            reasons.append("RSI weak")
 
         if latest["macd_hist"] > 0:
             score += 1
-            reasons["macd"] = f"bullish ({latest['macd_hist']:.4f})"
+            confidence += 6
+            reasons.append("MACD positive")
         elif latest["macd_hist"] < 0:
             score -= 1
-            reasons["macd"] = f"bearish ({latest['macd_hist']:.4f})"
-        else:
-            reasons["macd"] = "neutral"
+            confidence += 6
+            reasons.append("MACD negative")
 
-        v_score, vol_ratio = self.volume_score(d)
-        score += v_score
-        reasons["volume"] = v_score
-
-        b_score, breakout_up, breakout_down = self.breakout_score(d)
-        score += b_score
-        reasons["breakout"] = b_score
-
-        regime = self.detect_regime(d)
-        bias = self.htf_bias(h)
-        reasons["htf_bias"] = bias
-        if bias >= 2:
-            score += 1
-        elif bias <= -2:
-            score -= 1
-
-        if regime == "trend":
-            if score >= 2:
+        volume_ratio = float(latest["volume"] / latest["vol_sma"]) if latest["vol_sma"] else 1.0
+        if volume_ratio > 1.2:
+            confidence += 7
+            if latest["close"] >= latest["open"]:
                 score += 1
-            elif score <= -2:
+                reasons.append("Bullish volume")
+            else:
                 score -= 1
-        elif regime == "range":
-            if abs(score) < 3:
-                score = 0
-        elif regime == "volatile":
+                reasons.append("Bearish volume")
+
+        breakout_up = float(latest["close"]) > float(lookback["high"].max()) if not lookback.empty else False
+        breakout_down = float(latest["close"]) < float(lookback["low"].min()) if not lookback.empty else False
+        if breakout_up:
+            score += 1
+            confidence += 9
+            reasons.append("Breakout up")
+        if breakout_down:
+            score -= 1
+            confidence += 9
+            reasons.append("Breakout down")
+
+        adx_value = float(latest["adx"])
+        vwap_value = float(latest["vwap"])
+        regime = "trend" if adx_value >= self.cfg.adx_trend_threshold else "range"
+        if float(latest["atr"] / latest["close"]) > 0.012:
+            regime = "volatile"
+        reasons.append(f"Regime {regime}")
+
+        if regime == 'trend':
+            confidence += 8
+        elif regime == 'volatile':
+            confidence -= 8
+        else:
+            confidence -= 2
+
+        vwap_dist = abs(float(latest["close"] - vwap_value) / latest["close"])
+        if vwap_dist > self.cfg.vwap_distance_limit:
+            confidence -= 8
             if score > 0:
                 score -= 1
             elif score < 0:
                 score += 1
+            reasons.append("VWAP stretched")
 
-        price = float(latest["close"])
-        atr_val = float(latest["atr"])
+        htf_bias = 0
+        htf_sr_bias = 0
+        if h is not None:
+            h_last = h.iloc[-1]
+            if h_last["ema_fast"] > h_last["ema_slow"]:
+                htf_bias += 1
+            elif h_last["ema_fast"] < h_last["ema_slow"]:
+                htf_bias -= 1
+            if h_last["macd_hist"] > 0:
+                htf_bias += 1
+            elif h_last["macd_hist"] < 0:
+                htf_bias -= 1
+            h_lookback = h.iloc[-21:-1]
+            if not h_lookback.empty:
+                if float(latest["close"]) > float(h_lookback["high"].max()):
+                    htf_sr_bias += 1
+                elif float(latest["close"]) < float(h_lookback["low"].min()):
+                    htf_sr_bias -= 1
+            if htf_bias >= 2 and score > 0:
+                score += 1
+                confidence += 8
+                reasons.append("HTF bullish")
+            elif htf_bias <= -2 and score < 0:
+                score -= 1
+                confidence += 8
+                reasons.append("HTF bearish")
+            if htf_sr_bias != 0:
+                confidence += 4
 
-        if score >= self.cfg.aggressive_score_threshold and self.fake_breakout_filter(d, "long"):
-            reasons["fake_breakout"] = "long rejected"
-            return Signal(symbol, "hold", score, "fake breakout long", atr_val, price, float(latest["ema_fast"]), float(latest["ema_slow"]), float(latest["rsi"]), float(latest["macd_hist"]), vol_ratio, breakout_up, breakout_down, regime, bias, reasons)
+        fake_long = breakout_up and (latest["upper_wick_ratio"] > 0.45 or latest["close"] < lookback["high"].max()) if not lookback.empty else False
+        fake_short = breakout_down and (latest["lower_wick_ratio"] > 0.45 or latest["close"] > lookback["low"].min()) if not lookback.empty else False
+        if fake_long and score > 0:
+            score -= 2
+            confidence -= 18
+            reasons.append("Fake breakout long")
+        if fake_short and score < 0:
+            score += 2
+            confidence -= 18
+            reasons.append("Fake breakout short")
 
-        if score <= -self.cfg.aggressive_score_threshold and self.fake_breakout_filter(d, "short"):
-            reasons["fake_breakout"] = "short rejected"
-            return Signal(symbol, "hold", score, "fake breakout short", atr_val, price, float(latest["ema_fast"]), float(latest["ema_slow"]), float(latest["rsi"]), float(latest["macd_hist"]), vol_ratio, breakout_up, breakout_down, regime, bias, reasons)
+        if profile == 'macro-index':
+            if regime == 'trend' and abs(score) >= 2:
+                confidence += 5
+            if regime == 'range' and abs(score) >= 3:
+                confidence -= 4
+        elif profile == 'macro-gold':
+            if regime == 'range' and abs(score) >= 2:
+                confidence += 4
+            if regime == 'volatile':
+                confidence -= 5
 
-        if self.last_candle_too_extended(d):
-            reasons["overextended"] = "rejected"
-            return Signal(symbol, "hold", score, "overextended candle", atr_val, price, float(latest["ema_fast"]), float(latest["ema_slow"]), float(latest["rsi"]), float(latest["macd_hist"]), vol_ratio, breakout_up, breakout_down, regime, bias, reasons)
+        confidence = max(0, min(100, int(confidence)))
 
         action = "hold"
-        if score >= self.cfg.aggressive_score_threshold:
+        if score >= self.cfg.mode_threshold() and confidence >= self.cfg.mode_confidence_min():
             action = "long"
-        elif score <= -self.cfg.aggressive_score_threshold:
+        elif score <= -self.cfg.mode_threshold() and confidence >= self.cfg.mode_confidence_min():
             action = "short"
 
-        reason = ", ".join(f"{k}:{v}" for k, v in reasons.items()) if reasons else "No edge"
-        return Signal(symbol, action, score, reason, atr_val, price, float(latest["ema_fast"]), float(latest["ema_slow"]), float(latest["rsi"]), float(latest["macd_hist"]), vol_ratio, breakout_up, breakout_down, regime, bias, reasons)
+        return Signal(
+            symbol=symbol,
+            action=action,
+            score=score,
+            confidence=confidence,
+            regime=regime,
+            reason=", ".join(reasons) if reasons else "No edge",
+            profile=profile,
+            atr_value=float(latest["atr"]),
+            close_price=float(latest["close"]),
+            ema_fast=float(latest["ema_fast"]),
+            ema_slow=float(latest["ema_slow"]),
+            rsi_value=float(latest["rsi"]),
+            macd_hist=float(latest["macd_hist"]),
+            volume_ratio=volume_ratio,
+            breakout_up=breakout_up,
+            breakout_down=breakout_down,
+            adx_value=adx_value,
+            vwap_value=vwap_value,
+            htf_bias=htf_bias,
+            htf_sr_bias=htf_sr_bias,
+        )

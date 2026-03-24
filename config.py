@@ -5,6 +5,10 @@ from dataclasses import dataclass, field
 from typing import List
 
 
+def _getenv_bool(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).lower() == "true"
+
+
 @dataclass
 class BotConfig:
     telegram_token: str = os.getenv("TELEGRAM_TOKEN", "")
@@ -13,12 +17,10 @@ class BotConfig:
     scan_interval_seconds: int = int(os.getenv("SCAN_INTERVAL_SECONDS", "30"))
     primary_timeframe: str = os.getenv("PRIMARY_TIMEFRAME", "Min15")
     htf_timeframe: str = os.getenv("HTF_TIMEFRAME", "Min60")
-    primary_limit: int = int(os.getenv("PRIMARY_LIMIT", "180"))
-    htf_limit: int = int(os.getenv("HTF_LIMIT", "180"))
+    kline_limit: int = int(os.getenv("KLINE_LIMIT", "220"))
+    htf_kline_limit: int = int(os.getenv("HTF_KLINE_LIMIT", "220"))
 
-    symbols: List[str] = field(
-        default_factory=lambda: os.getenv("SYMBOLS", "XAUT_USDT,NAS100_USDT").split(",")
-    )
+    symbols: List[str] = field(default_factory=lambda: os.getenv("SYMBOLS", "XAUT_USDT,NAS100_USDT").split(","))
 
     starting_balance: float = float(os.getenv("STARTING_BALANCE", "1000"))
     leverage: int = int(os.getenv("LEVERAGE", "5"))
@@ -38,25 +40,46 @@ class BotConfig:
     rr_ratio: float = float(os.getenv("RR_RATIO", "1.8"))
     trailing_activation_r: float = float(os.getenv("TRAILING_ACTIVATION_R", "1.1"))
     trailing_gap_pct: float = float(os.getenv("TRAILING_GAP_PCT", "0.008"))
+    break_even_r: float = float(os.getenv("BREAK_EVEN_R", "0.8"))
+    partial_tp_r: float = float(os.getenv("PARTIAL_TP_R", "1.0"))
+    partial_close_ratio: float = float(os.getenv("PARTIAL_CLOSE_RATIO", "0.5"))
+    time_stop_minutes: int = int(os.getenv("TIME_STOP_MINUTES", "180"))
 
     aggressive_score_threshold: int = int(os.getenv("AGGRESSIVE_SCORE_THRESHOLD", "3"))
+    calm_score_threshold: int = int(os.getenv("CALM_SCORE_THRESHOLD", "4"))
+    confidence_min_aggressive: int = int(os.getenv("CONFIDENCE_MIN_AGGRESSIVE", "55"))
+    confidence_min_calm: int = int(os.getenv("CONFIDENCE_MIN_CALM", "70"))
+    risk_mode: str = os.getenv("RISK_MODE", "aggressive").lower()  # aggressive | calm
+
     funding_abs_limit: float = float(os.getenv("FUNDING_ABS_LIMIT", "0.0025"))
     max_last_candle_pct: float = float(os.getenv("MAX_LAST_CANDLE_PCT", "0.025"))
     max_spread_pct: float = float(os.getenv("MAX_SPREAD_PCT", "0.0025"))
+    adx_trend_threshold: float = float(os.getenv("ADX_TREND_THRESHOLD", "20"))
+    vwap_distance_limit: float = float(os.getenv("VWAP_DISTANCE_LIMIT", "0.012"))
 
-    volume_spike_threshold: float = float(os.getenv("VOLUME_SPIKE_THRESHOLD", "1.2"))
-    fake_breakout_wick_ratio: float = float(os.getenv("FAKE_BREAKOUT_WICK_RATIO", "0.45"))
-    max_last_candle_range_atr: float = float(os.getenv("MAX_LAST_CANDLE_RANGE_ATR", "2.2"))
-    regime_adx_threshold: float = float(os.getenv("REGIME_ADX_THRESHOLD", "20"))
-    regime_bb_width_threshold: float = float(os.getenv("REGIME_BB_WIDTH_THRESHOLD", "0.018"))
+    use_session_filter: bool = _getenv_bool("USE_SESSION_FILTER", "true")
+    xaut_session_utc: str = os.getenv("XAUT_SESSION_UTC", "06-21")
+    nas100_session_utc: str = os.getenv("NAS100_SESSION_UTC", "12-21")
+    session_max_trades: int = int(os.getenv("SESSION_MAX_TRADES", "6"))
+    xaut_preferred_hours: str = os.getenv("XAUT_PREFERRED_HOURS", "07-11,13-17")
+    nas100_preferred_hours: str = os.getenv("NAS100_PREFERRED_HOURS", "13-17,18-20")
+
+    use_news_filter: bool = _getenv_bool("USE_NEWS_FILTER", "true")
+    news_blackout_hours_utc: str = os.getenv("NEWS_BLACKOUT_HOURS_UTC", "13,14")
 
     state_path: str = os.getenv("STATE_PATH", "storage/state.json")
     wallet_path: str = os.getenv("WALLET_PATH", "storage/wallet.json")
     trades_path: str = os.getenv("TRADES_PATH", "storage/trades.json")
     log_path: str = os.getenv("LOG_PATH", "storage/logs.txt")
 
-    bot_enabled: bool = os.getenv("BOT_ENABLED", "true").lower() == "true"
-    sim_mode: bool = os.getenv("SIM_MODE", "true").lower() == "true"
+    bot_enabled: bool = _getenv_bool("BOT_ENABLED", "true")
+    sim_mode: bool = _getenv_bool("SIM_MODE", "true")
+
+    def mode_threshold(self) -> int:
+        return self.aggressive_score_threshold if self.risk_mode == "aggressive" else self.calm_score_threshold
+
+    def mode_confidence_min(self) -> int:
+        return self.confidence_min_aggressive if self.risk_mode == "aggressive" else self.confidence_min_calm
 
 
 CONFIG = BotConfig()

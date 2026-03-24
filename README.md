@@ -1,13 +1,30 @@
-# MEXC Futures Paper Bot
+# MEXC Futures Paper Bot (Telegram Plus+)
 
-Bu sürüm sadece şu sembolleri tarar:
-- XAUT_USDT
-- NAS100_USDT
+Bu sürüm sadece XAUT_USDT ve NAS100_USDT için paper trading yapar.
 
-Özellikler:
-- Paper trading (1000 USDT başlangıç)
-- Multi-timeframe analiz (15m + 1h)
-- Regime detection (trend/range/volatile)
-- Fake breakout filtresi
-- ATR tabanlı stop / TP / trailing
-- Telegram komutları: /baslat /durdur /durum /bakiye /gecmis /analiz XAUT /analiz NAS100 /ayar
+## Yeni eklenenler
+- Agresif / sakin mod
+- Confidence score
+- Sembol bazlı profil
+- Seans zekâsı (preferred hours)
+- Haber filtresi iskeleti (UTC blackout saatleri)
+- Gelişmiş performans raporu
+
+## Telegram komutları
+/start
+/baslat
+/durdur
+/durum
+/pozisyon
+/bakiye
+/gecmis
+/sonislem
+/analiz XAUT
+/analiz NAS100
+/aciklama
+/rapor
+/seans
+/riskayar
+/backtest XAUT
+/mod agresif
+/mod sakin

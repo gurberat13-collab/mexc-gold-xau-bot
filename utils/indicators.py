@@ -1,19 +1,7 @@
 from __future__ import annotations
 
-from typing import Tuple
-import numpy as np
 import pandas as pd
-
-
-def ensure_numeric(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    rename = {}
-    if "volume" in out.columns and "vol" not in out.columns:
-        rename["volume"] = "vol"
-    out = out.rename(columns=rename)
-    for col in ["open", "high", "low", "close", "vol"]:
-        out[col] = pd.to_numeric(out[col], errors="coerce")
-    return out.dropna().reset_index(drop=True)
+import numpy as np
 
 
 def ema(series: pd.Series, period: int) -> pd.Series:
@@ -31,7 +19,7 @@ def rsi(series: pd.Series, period: int = 14) -> pd.Series:
     return out.fillna(50)
 
 
-def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[pd.Series, pd.Series, pd.Series]:
+def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
     fast_ema = ema(series, fast)
     slow_ema = ema(series, slow)
     macd_line = fast_ema - slow_ema
@@ -47,14 +35,6 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     prev_close = close.shift(1)
     tr = pd.concat([(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
     return tr.rolling(period).mean().bfill()
-
-
-def bollinger_width(series: pd.Series, period: int = 20, std_mult: float = 2.0) -> pd.Series:
-    ma = series.rolling(period).mean()
-    std = series.rolling(period).std(ddof=0)
-    upper = ma + std * std_mult
-    lower = ma - std * std_mult
-    return ((upper - lower) / ma.replace(0, np.nan)).fillna(0)
 
 
 def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
@@ -73,27 +53,7 @@ def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return dx.rolling(period).mean().fillna(0)
 
 
-def candle_stats(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out["body"] = (out["close"] - out["open"]).abs()
-    out["range"] = (out["high"] - out["low"]).replace(0, np.nan)
-    out["upper_wick"] = out["high"] - out[["open", "close"]].max(axis=1)
-    out["lower_wick"] = out[["open", "close"]].min(axis=1) - out["low"]
-    out["upper_wick_ratio"] = (out["upper_wick"] / out["range"]).fillna(0)
-    out["lower_wick_ratio"] = (out["lower_wick"] / out["range"]).fillna(0)
-    return out
-
-
-def add_indicators(df: pd.DataFrame, ema_fast_period: int = 9, ema_slow_period: int = 21, rsi_period: int = 14, atr_period: int = 14) -> pd.DataFrame:
-    out = ensure_numeric(df)
-    out["ema_fast"] = ema(out["close"], ema_fast_period)
-    out["ema_slow"] = ema(out["close"], ema_slow_period)
-    out["rsi"] = rsi(out["close"], rsi_period)
-    _, _, out["macd_hist"] = macd(out["close"])
-    out["atr"] = atr(out, atr_period)
-    out["bb_width"] = bollinger_width(out["close"])
-    out["adx"] = adx(out)
-    out = candle_stats(out)
-    out["volume"] = out["vol"]
-    out["vol_sma"] = out["vol"].rolling(20).mean()
-    return out
+def vwap(df: pd.DataFrame) -> pd.Series:
+    typical = (df["high"] + df["low"] + df["close"]) / 3
+    pv = typical * df["volume"]
+    return pv.cumsum() / df["volume"].replace(0, np.nan).cumsum()
