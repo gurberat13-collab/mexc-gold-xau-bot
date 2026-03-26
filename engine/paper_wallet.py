@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +13,7 @@ class Position:
     side: str
     entry_price: float
     quantity: float
+    initial_quantity: float
     leverage: int
     stop_loss: float
     take_profit: float
@@ -23,35 +24,40 @@ class Position:
     partial_take_profit: float
     partial_close_ratio: float
     partial_taken: bool
-    break_even_trigger: float
-    break_even_done: bool
-    opened_at: str
-    highest_price: float
-    lowest_price: float
-    fees_paid: float
-    reason: str
-    regime: str
-    score: int
+    partial_targets: list[dict[str, Any]] = field(default_factory=list)
+    break_even_trigger: float = 0.0
+    break_even_done: bool = False
+    opened_at: str = ""
+    highest_price: float = 0.0
+    lowest_price: float = 0.0
+    fees_paid: float = 0.0
+    reason: str = ""
+    regime: str = ""
+    score: int = 0
+    confidence: int = 0
 
 
 class PaperWallet:
     def __init__(self, path: str, starting_balance: float):
         self.path = path
         self.starting_balance = starting_balance
-        self.data = load_json(path, {
-            "balance": starting_balance,
-            "equity": starting_balance,
-            "peak_equity": starting_balance,
-            "realized_pnl": 0.0,
-            "daily_realized_pnl": 0.0,
-            "consecutive_losses": 0,
-            "trades_today": 0,
-            "session_trades": 0,
-            "day": datetime.now(timezone.utc).date().isoformat(),
-            "open_position": None,
-            "history": [],
-            "last_summary_day": None,
-        })
+        self.data = load_json(
+            path,
+            {
+                "balance": starting_balance,
+                "equity": starting_balance,
+                "peak_equity": starting_balance,
+                "realized_pnl": 0.0,
+                "daily_realized_pnl": 0.0,
+                "consecutive_losses": 0,
+                "trades_today": 0,
+                "session_trades": 0,
+                "day": datetime.now(timezone.utc).date().isoformat(),
+                "open_position": None,
+                "history": [],
+                "last_summary_day": None,
+            },
+        )
         self.save()
 
     def rollover_if_needed(self) -> None:
@@ -87,7 +93,7 @@ class PaperWallet:
 
     def set_equity(self, equity: float) -> None:
         self.data["equity"] = equity
-        self.data["peak_equity"] = max(float(self.data.get('peak_equity', self.starting_balance)), equity)
+        self.data["peak_equity"] = max(float(self.data.get("peak_equity", self.starting_balance)), equity)
         self.save()
 
     def open_trade(self, position: Position, margin_used: float) -> None:
@@ -97,11 +103,28 @@ class PaperWallet:
         self.data["session_trades"] += 1
         self.save()
 
-    def partial_close(self, exit_price: float, fee_rate: float, slippage_rate: float) -> dict[str, Any] | None:
+    def partial_close(
+        self,
+        exit_price: float,
+        fee_rate: float,
+        slippage_rate: float,
+        close_ratio: float | None = None,
+        label: str | None = None,
+    ) -> dict[str, Any] | None:
         pos = self.data["open_position"]
-        if pos is None or pos.get("partial_taken"):
+        if pos is None:
             return None
-        qty = float(pos["quantity"]) * float(pos["partial_close_ratio"])
+
+        initial_quantity = float(pos.get("initial_quantity", pos["quantity"]))
+        current_quantity = float(pos["quantity"])
+        if current_quantity <= 0:
+            return None
+
+        ratio = float(close_ratio if close_ratio is not None else pos.get("partial_close_ratio", 0))
+        qty = min(current_quantity, max(initial_quantity * ratio, 0.0))
+        if qty <= 0:
+            return None
+
         entry = float(pos["entry_price"])
         side = pos["side"]
         exit_slippage = exit_price * slippage_rate
@@ -109,22 +132,43 @@ class PaperWallet:
         gross = (effective_exit - entry) * qty if side == "long" else (entry - effective_exit) * qty
         fee = abs(effective_exit * qty) * fee_rate
         net = gross - fee
-        released_margin = float(pos["margin_used"]) * float(pos["partial_close_ratio"])
+
+        margin_used = float(pos["margin_used"])
+        released_margin = margin_used * (qty / current_quantity)
         self.data["balance"] += released_margin + net
         self.data["realized_pnl"] += net
         self.data["daily_realized_pnl"] += net
-        pos["quantity"] = round(float(pos["quantity"]) - qty, 6)
-        pos["margin_used"] = round(float(pos["margin_used"]) - released_margin, 6)
+
+        pos["quantity"] = round(current_quantity - qty, 6)
+        pos["margin_used"] = round(margin_used - released_margin, 6)
         pos["fees_paid"] = round(float(pos.get("fees_paid", 0.0)) + fee, 6)
-        pos["partial_taken"] = True
+
+        if label:
+            targets = pos.get("partial_targets", [])
+            for target in targets:
+                if target.get("label") == label:
+                    target["hit"] = True
+            pos["partial_targets"] = targets
+
+        if not any(not target.get("hit", False) for target in pos.get("partial_targets", [])):
+            pos["partial_taken"] = True
+
         self.data["open_position"] = pos
         self.save()
-        return {"symbol": pos["symbol"], "side": side, "qty_closed": qty, "net_pnl": net, "price": effective_exit}
+        return {
+            "symbol": pos["symbol"],
+            "side": side,
+            "label": label or "partial",
+            "qty_closed": qty,
+            "net_pnl": net,
+            "price": effective_exit,
+        }
 
     def close_trade(self, exit_price: float, exit_reason: str, fee_rate: float, slippage_rate: float) -> dict[str, Any]:
         pos = self.data["open_position"]
         if pos is None:
             raise RuntimeError("No open position to close")
+
         qty = float(pos["quantity"])
         entry = float(pos["entry_price"])
         side = pos["side"]
@@ -133,12 +177,14 @@ class PaperWallet:
         effective_exit = exit_price - exit_slippage if side == "long" else exit_price + exit_slippage
         gross = (effective_exit - entry) * qty if side == "long" else (entry - effective_exit) * qty
         close_fee = abs(effective_exit * qty) * fee_rate
-        open_fee = float(pos.get("fees_paid", 0.0))
-        net = gross - close_fee - open_fee
+        carried_fees = float(pos.get("fees_paid", 0.0))
+        net = gross - close_fee - carried_fees
+
         self.data["balance"] += margin_used + net
         self.data["realized_pnl"] += net
         self.data["daily_realized_pnl"] += net
         self.data["consecutive_losses"] = self.data["consecutive_losses"] + 1 if net < 0 else 0
+
         trade = {
             **pos,
             "exit_price": round(effective_exit, 6),
@@ -146,12 +192,12 @@ class PaperWallet:
             "gross_pnl": round(gross, 6),
             "net_pnl": round(net, 6),
             "closed_at": datetime.now(timezone.utc).isoformat(),
-            "total_fees": round(open_fee + close_fee, 6),
+            "total_fees": round(carried_fees + close_fee, 6),
         }
         self.data["history"] = [trade] + self.data["history"][:199]
         self.data["open_position"] = None
         self.data["equity"] = self.data["balance"]
-        self.data["peak_equity"] = max(float(self.data.get('peak_equity', self.starting_balance)), float(self.data['equity']))
+        self.data["peak_equity"] = max(float(self.data.get("peak_equity", self.starting_balance)), float(self.data["equity"]))
         self.save()
         return trade
 
@@ -168,14 +214,14 @@ class PaperWallet:
         avg_win = gross_profit / wins if wins else 0
         avg_loss = gross_loss / losses if losses else 0
         expectancy = ((wins / len(history)) * avg_win - (losses / len(history)) * avg_loss) if history else 0
-        peak_equity = float(self.data.get('peak_equity', self.starting_balance))
-        current_equity = float(self.data.get('equity', self.balance))
+        peak_equity = float(self.data.get("peak_equity", self.starting_balance))
+        current_equity = float(self.data.get("equity", self.balance))
         max_dd_pct = max(0.0, ((peak_equity - current_equity) / peak_equity * 100) if peak_equity else 0.0)
         by_symbol = {}
-        for t in history:
-            sym = t.get('symbol', 'NA')
-            by_symbol.setdefault(sym, 0.0)
-            by_symbol[sym] += float(t.get('net_pnl', 0))
+        for trade in history:
+            symbol = trade.get("symbol", "NA")
+            by_symbol.setdefault(symbol, 0.0)
+            by_symbol[symbol] += float(trade.get("net_pnl", 0))
         return {
             "trades": len(history),
             "wins": wins,

@@ -4,14 +4,18 @@ import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+from engine.backtester import Backtester
+
 
 class TelegramController:
-    def __init__(self, config, scanner, wallet, client, strategy, logger):
+    def __init__(self, config, scanner, wallet, client, strategy, risk, logger):
         self.cfg = config
         self.scanner = scanner
         self.wallet = wallet
         self.client = client
         self.strategy = strategy
+        self.risk = risk
+        self.backtester = Backtester(self.cfg, self.strategy, self.risk, self.scanner)
         self.logger = logger
         self.app = Application.builder().token(self.cfg.telegram_token).build()
         for name, fn in [
@@ -257,7 +261,7 @@ class TelegramController:
 
     async def backtest_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not context.args:
-            await update.message.reply_text("Kullanım: /backtest XAUT veya /backtest NAS100")
+            await update.message.reply_text("Kullanim: /backtest XAUT 600 wf")
             return
         raw = context.args[0].upper().replace("USDT", "").replace("/", "").strip()
         alias_map = {
@@ -267,39 +271,38 @@ class TelegramController:
             "NAS100": "NAS100_USDT",
             "NASDAQ": "NAS100_USDT",
         }
+        limit = self.cfg.backtest_default_limit
+        walk_forward = False
+        for arg in context.args[1:]:
+            cleaned = arg.strip().lower()
+            if cleaned.isdigit():
+                limit = max(200, int(cleaned))
+            elif cleaned in {"wf", "walkforward", "walk-forward"}:
+                walk_forward = True
         symbol = alias_map.get(raw, f"{raw}_USDT")
-        df = self.client.get_klines(symbol, self.cfg.primary_timeframe, 300)
-        df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, 300)
-        wins = losses = holds = 0
-        pnl = 0.0
-        for i in range(80, len(df) - 4):
-            signal = self.strategy.analyze(
-                symbol,
-                df.iloc[:i].copy(),
-                df_htf.iloc[: max(60, min(len(df_htf), i // 4 + 60))].copy(),
-            )
-            if signal.action == "hold":
-                holds += 1
-                continue
-            entry = float(df.iloc[i]["close"])
-            future = df.iloc[i + 1:i + 5]
-            exit_price = float(future.iloc[-1]["close"])
-            trade_pnl = (exit_price - entry) if signal.action == "long" else (entry - exit_price)
-            pnl += trade_pnl
-            if trade_pnl > 0:
-                wins += 1
-            else:
-                losses += 1
-        total = wins + losses
-        await update.message.reply_text(
-            f"🧪 Mini Backtest {symbol}\n"
-            f"Trade: {total}\n"
-            f"Win: {wins}\n"
-            f"Loss: {losses}\n"
-            f"Hold: {holds}\n"
-            f"Ham PnL puanı: {pnl:.2f}\n"
-            f"Not: Bu hızlı doğrulama testidir, tam backtest değildir."
-        )
+        df = self.client.get_klines(symbol, self.cfg.primary_timeframe, limit)
+        df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, max(limit, self.cfg.htf_kline_limit))
+        result = self.backtester.run(symbol, df, df_htf, walk_forward=walk_forward)
+
+        lines = [
+            f"Mini Backtest {symbol}",
+            f"Mode: {'WALK-FORWARD' if walk_forward else 'STANDARD'}",
+            f"Bars: {len(df)}",
+            f"Trade: {result.trades}",
+            f"Win: {result.wins}",
+            f"Loss: {result.losses}",
+            f"Hold: {result.holds}",
+            f"Win rate: {result.win_rate:.1f}%",
+            f"Net PnL: {result.net_pnl:.2f} USDT",
+            f"Sim balance: {result.balance:.2f} USDT",
+        ]
+        if result.segments:
+            for segment in result.segments:
+                lines.append(
+                    f"{segment['label']}: trade={segment['trades']} win={segment['wins']} "
+                    f"loss={segment['losses']} pnl={segment['net_pnl']:.2f}"
+                )
+        await update.message.reply_text("\n".join(lines))
 
     async def start_polling(self) -> None:
         await self.app.initialize()

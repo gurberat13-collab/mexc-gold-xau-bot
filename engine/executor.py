@@ -10,14 +10,26 @@ class Executor:
         self.cfg = config
         self.wallet = wallet
 
-    def open_position(self, symbol: str, side: str, entry_price: float, risk_plan, reason: str, regime: str, score: int) -> dict:
+    def open_position(
+        self,
+        symbol: str,
+        side: str,
+        entry_price: float,
+        risk_plan,
+        reason: str,
+        regime: str,
+        score: int,
+        confidence: int = 0,
+    ) -> dict:
         effective_entry = entry_price + (entry_price * self.cfg.slippage_rate) if side == "long" else entry_price - (entry_price * self.cfg.slippage_rate)
         fees = abs(risk_plan.notional) * self.cfg.fee_rate
+        partial_targets = [dict(target) for target in risk_plan.partial_targets]
         pos = Position(
             symbol=symbol,
             side=side,
             entry_price=round(effective_entry, 6),
             quantity=round(risk_plan.quantity, 6),
+            initial_quantity=round(risk_plan.quantity, 6),
             leverage=self.cfg.leverage,
             stop_loss=round(risk_plan.stop_loss, 6),
             take_profit=round(risk_plan.take_profit, 6),
@@ -28,6 +40,7 @@ class Executor:
             partial_take_profit=round(risk_plan.partial_take_profit, 6),
             partial_close_ratio=risk_plan.partial_close_ratio,
             partial_taken=False,
+            partial_targets=partial_targets,
             break_even_trigger=round(risk_plan.break_even_trigger, 6),
             break_even_done=False,
             opened_at=datetime.now(timezone.utc).isoformat(),
@@ -37,6 +50,7 @@ class Executor:
             reason=reason,
             regime=regime,
             score=score,
+            confidence=confidence,
         )
         self.wallet.open_trade(pos, risk_plan.margin_used)
         return self.wallet.open_position

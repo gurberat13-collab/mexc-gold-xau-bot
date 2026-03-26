@@ -33,7 +33,7 @@ async def main() -> None:
         await scanner.start()
         await scanner.run_forever()
         return
-    telegram = TelegramController(CONFIG, scanner, wallet, client, strategy, logger)
+    telegram = TelegramController(CONFIG, scanner, wallet, client, strategy, risk, logger)
     scanner.notifier = telegram.notify
     await telegram.start_polling()
     if CONFIG.bot_enabled:
