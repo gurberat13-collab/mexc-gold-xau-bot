@@ -28,6 +28,11 @@ class Backtester:
             return df_htf.iloc[0:0].copy()
         return df_htf[df_htf["time"] <= signal_time].copy()
 
+    def _ltf_history_until(self, df_ltf, signal_time):
+        if df_ltf is None or df_ltf.empty or "time" not in df_ltf:
+            return None
+        return df_ltf[df_ltf["time"] <= signal_time].copy()
+
     def _apply_session_bonus(self, symbol: str, signal, signal_time) -> None:
         bonus = self.scanner.preferred_session_bonus(symbol, signal_time) * self.cfg.preferred_session_confidence_bonus
         if bonus:
@@ -181,7 +186,7 @@ class Backtester:
             "bars_held": max(1, bars_held),
         }
 
-    def _run_index_range(self, symbol: str, df, df_htf, start_idx: int, end_idx: int, starting_balance: float) -> dict[str, Any]:
+    def _run_index_range(self, symbol: str, df, df_htf, df_ltf, start_idx: int, end_idx: int, starting_balance: float) -> dict[str, Any]:
         balance = starting_balance
         wins = losses = holds = 0
         pnl = 0.0
@@ -203,7 +208,12 @@ class Backtester:
                 i += 1
                 continue
 
-            signal = self.strategy.analyze(symbol, history, self._htf_history_until(df_htf, signal_time))
+            signal = self.strategy.analyze(
+                symbol,
+                history,
+                self._htf_history_until(df_htf, signal_time),
+                self._ltf_history_until(df_ltf, signal_time),
+            )
             self._apply_session_bonus(symbol, signal, signal_time)
             if signal.action == "hold":
                 holds += 1
@@ -236,9 +246,9 @@ class Backtester:
             "win_rate": (wins / trades * 100) if trades else 0.0,
         }
 
-    def run(self, symbol: str, df, df_htf, walk_forward: bool = False) -> BacktestResult:
+    def run(self, symbol: str, df, df_htf, df_ltf=None, walk_forward: bool = False) -> BacktestResult:
         if not walk_forward:
-            result = self._run_index_range(symbol, df, df_htf, 0, len(df), self.cfg.starting_balance)
+            result = self._run_index_range(symbol, df, df_htf, df_ltf, 0, len(df), self.cfg.starting_balance)
             return BacktestResult(segments=[], **result)
 
         segments: list[dict[str, Any]] = []
@@ -252,7 +262,7 @@ class Backtester:
         for idx in range(splits):
             start_idx = warmup + (idx * segment_size)
             end_idx = len(df) if idx == splits - 1 else min(len(df), start_idx + segment_size)
-            segment = self._run_index_range(symbol, df, df_htf, start_idx, end_idx, balance)
+            segment = self._run_index_range(symbol, df, df_htf, df_ltf, start_idx, end_idx, balance)
             balance = segment["balance"]
             segments.append(
                 {

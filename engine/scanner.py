@@ -116,9 +116,12 @@ class ScannerEngine:
     async def _analyze_symbol(self, symbol: str):
         df = self.client.get_klines(symbol, self.cfg.primary_timeframe, self.cfg.kline_limit)
         df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, self.cfg.htf_kline_limit)
+        df_ltf = None
+        if self.cfg.use_nas100_asia_model and symbol.startswith("NAS100"):
+            df_ltf = self.client.get_klines(symbol, self.cfg.nas100_model_timeframe, self.cfg.nas100_model_kline_limit)
         snapshot = self.client.get_ticker(symbol)
-        signal = self.strategy.analyze(symbol, df, df_htf)
-        return df, df_htf, snapshot, signal
+        signal = self.strategy.analyze(symbol, df, df_htf, df_ltf)
+        return df, df_htf, df_ltf, snapshot, signal
 
     def _apply_session_bonus(self, symbol: str, signal, analysis_time: datetime) -> None:
         bonus = self.preferred_session_bonus(symbol, analysis_time) * self.cfg.preferred_session_confidence_bonus
@@ -133,7 +136,7 @@ class ScannerEngine:
 
         if self.wallet.open_position:
             symbol = self.wallet.open_position["symbol"]
-            df, _, snapshot, fresh_signal = await self._analyze_symbol(symbol)
+            df, _, _, snapshot, fresh_signal = await self._analyze_symbol(symbol)
             analysis_time = self._analysis_time(df)
             self._apply_session_bonus(symbol, fresh_signal, analysis_time)
             self.position_manager.mark_equity(snapshot.last_price)
@@ -183,7 +186,7 @@ class ScannerEngine:
         best_snapshot = None
 
         for symbol in self.cfg.symbols:
-            df, _, snapshot, signal = await self._analyze_symbol(symbol)
+            df, _, _, snapshot, signal = await self._analyze_symbol(symbol)
             analysis_time = self._analysis_time(df)
             if not self.in_session(symbol, analysis_time):
                 continue
@@ -230,8 +233,11 @@ class ScannerEngine:
                 f"Giris: {opened['entry_price']:.2f}\n"
                 f"SL: {opened['stop_loss']:.2f} | TP: {opened['take_profit']:.2f}\n"
                 f"Partial: {opened['partial_take_profit']:.2f} | BE: {opened['break_even_trigger']:.2f}\n"
-                f"Rejim: {opened['regime']} | Skor: {opened['score']} | Guven: {best_signal.confidence}/100 | Mod: {self.cfg.risk_mode.upper()}"
+                f"Rejim: {opened['regime']} | Skor: {opened['score']} | Guven: {best_signal.confidence}/100 | Mod: {self.cfg.risk_mode.upper()}\n"
+                f"Model: {best_signal.model}"
             )
+            if best_signal.target_label and best_signal.target_price is not None:
+                msg += f"\nHedef: {best_signal.target_label} @ {best_signal.target_price:.2f}"
             self.logger.info(msg.replace("\n", " | "))
             await self.notifier(msg)
 

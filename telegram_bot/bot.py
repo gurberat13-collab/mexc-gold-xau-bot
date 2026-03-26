@@ -28,6 +28,29 @@ class TelegramController:
         ]:
             self.app.add_handler(CommandHandler(name, fn))
 
+    def _timeframe_minutes(self, timeframe: str) -> int:
+        text = timeframe.lower()
+        if text.startswith("min"):
+            return max(1, int(text[3:]))
+        if text.startswith("hour"):
+            return max(1, int(text[4:]) * 60)
+        if text.startswith("day"):
+            return max(1, int(text[3:]) * 1440)
+        return 1
+
+    def _get_ltf_context(self, symbol: str, primary_limit: int | None = None):
+        if not (self.cfg.use_nas100_asia_model and symbol.startswith("NAS100")):
+            return None
+
+        limit = self.cfg.nas100_model_kline_limit
+        if primary_limit is not None:
+            primary_minutes = self._timeframe_minutes(self.cfg.primary_timeframe)
+            ltf_minutes = self._timeframe_minutes(self.cfg.nas100_model_timeframe)
+            ratio = max(1, -(-primary_minutes // ltf_minutes))
+            limit = max(limit, (primary_limit * ratio) + 200)
+
+        return self.client.get_klines(symbol, self.cfg.nas100_model_timeframe, limit)
+
     async def notify(self, text: str) -> None:
         if self.cfg.telegram_chat_id:
             await self.app.bot.send_message(chat_id=self.cfg.telegram_chat_id, text=text)
@@ -168,15 +191,23 @@ class TelegramController:
             try:
                 df = self.client.get_klines(symbol, self.cfg.primary_timeframe, self.cfg.kline_limit)
                 df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, self.cfg.htf_kline_limit)
+                df_ltf = self._get_ltf_context(symbol)
                 snapshot = self.client.get_ticker(symbol)
-                signal = self.strategy.analyze(symbol, df, df_htf)
+                signal = self.strategy.analyze(symbol, df, df_htf, df_ltf)
 
                 text = (
                     f"🧠 {symbol}\nFiyat: {snapshot.last_price:.2f}\nSkor: {signal.score}\nGüven: {signal.confidence}/100\nAksiyon: {signal.action.upper()}\n"
+                    f"Model: {signal.model}\n"
                     f"Rejim: {signal.regime} | Profil: {signal.profile}\nRSI: {signal.rsi_value:.2f}\nMACD Hist: {signal.macd_hist:.4f}\n"
                     f"ADX: {signal.adx_value:.2f}\nVWAP: {signal.vwap_value:.2f}\nVol Ratio: {signal.volume_ratio:.2f}\n"
                     f"HTF Bias: {signal.htf_bias} | HTF SR: {signal.htf_sr_bias}\nFunding: {snapshot.funding_rate:.5f}\nSebep: {signal.reason}"
                 )
+                if signal.target_label and signal.target_price is not None:
+                    text += f"\nHedef: {signal.target_label} @ {signal.target_price:.2f}"
+                if signal.sweep_side:
+                    text += f"\nSweep: {signal.sweep_side}"
+                if signal.first_fvg_side:
+                    text += f"\nFirst FVG: {signal.first_fvg_side}"
                 results.append(text)
 
             except requests.HTTPError as exc:
@@ -282,7 +313,8 @@ class TelegramController:
         symbol = alias_map.get(raw, f"{raw}_USDT")
         df = self.client.get_klines(symbol, self.cfg.primary_timeframe, limit)
         df_htf = self.client.get_klines(symbol, self.cfg.htf_timeframe, max(limit, self.cfg.htf_kline_limit))
-        result = self.backtester.run(symbol, df, df_htf, walk_forward=walk_forward)
+        df_ltf = self._get_ltf_context(symbol, limit)
+        result = self.backtester.run(symbol, df, df_htf, df_ltf, walk_forward=walk_forward)
 
         lines = [
             f"Mini Backtest {symbol}",

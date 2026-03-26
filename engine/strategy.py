@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -29,6 +31,14 @@ class Signal:
     vwap_value: float
     htf_bias: int
     htf_sr_bias: int
+    model: str = "base"
+    target_price: float | None = None
+    target_label: str | None = None
+    sweep_side: str | None = None
+    cisd_detected: bool = False
+    asia_high: float | None = None
+    asia_low: float | None = None
+    first_fvg_side: str | None = None
 
     def to_dict(self):
         return asdict(self)
@@ -37,6 +47,7 @@ class Signal:
 class StrategyEngine:
     def __init__(self, config):
         self.cfg = config
+        self.ny_tz = ZoneInfo(self.cfg.ny_timezone)
 
     def determine_action(self, score: int, confidence: int, regime: str | None = None) -> str:
         if self.cfg.require_trending_regime and regime is not None and regime != "trend":
@@ -86,6 +97,54 @@ class StrategyEngine:
             "volume": 0.9,
         }
 
+    def _ensure_utc(self, value) -> datetime:
+        if hasattr(value, "to_pydatetime"):
+            value = value.to_pydatetime()
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def _reference_time(self, df: pd.DataFrame) -> datetime:
+        return self._ensure_utc(df.iloc[-1]["time"])
+
+    def _parse_clock(self, value: str) -> time:
+        hour, minute = (value.split(":") + ["0"])[:2]
+        return time(int(hour), int(minute))
+
+    def _window_bounds_ny(self, reference_time: datetime, window_text: str) -> tuple[datetime, datetime]:
+        reference_ny = self._ensure_utc(reference_time).astimezone(self.ny_tz)
+        start_text, end_text = [chunk.strip() for chunk in window_text.split("-")]
+        start_clock = self._parse_clock(start_text)
+        end_clock = self._parse_clock(end_text)
+
+        if start_clock <= end_clock:
+            start_date = reference_ny.date()
+            end_date = reference_ny.date()
+        else:
+            if reference_ny.time() <= end_clock:
+                start_date = reference_ny.date() - timedelta(days=1)
+                end_date = reference_ny.date()
+            else:
+                start_date = reference_ny.date()
+                end_date = reference_ny.date() + timedelta(days=1)
+
+        start_dt = datetime.combine(start_date, start_clock, tzinfo=self.ny_tz)
+        end_dt = datetime.combine(end_date, end_clock, tzinfo=self.ny_tz)
+        return start_dt.astimezone(timezone.utc), end_dt.astimezone(timezone.utc)
+
+    def _slice_window_ny(self, df: pd.DataFrame, reference_time: datetime, window_text: str) -> pd.DataFrame:
+        start_dt, end_dt = self._window_bounds_ny(reference_time, window_text)
+        return df[(df["time"] >= start_dt) & (df["time"] <= end_dt)].copy()
+
+    def _in_any_window_ny(self, reference_time: datetime, windows_text: str) -> bool:
+        for window_text in windows_text.split(","):
+            if not window_text.strip():
+                continue
+            start_dt, end_dt = self._window_bounds_ny(reference_time, window_text.strip())
+            if start_dt <= self._ensure_utc(reference_time) <= end_dt:
+                return True
+        return False
+
     def _recent_cross_bonus(self, d: pd.DataFrame) -> int:
         recent = d["ema_diff"].iloc[-4:]
         if len(recent) < 2:
@@ -130,7 +189,7 @@ class StrategyEngine:
             return -2
         return 0
 
-    def analyze(self, symbol: str, df: pd.DataFrame, df_htf: pd.DataFrame | None = None) -> Signal:
+    def _analyze_base(self, symbol: str, df: pd.DataFrame, df_htf: pd.DataFrame | None = None) -> Signal:
         d = self._prep(df)
         h = self._prep(df_htf) if df_htf is not None and len(df_htf) > 40 else None
         latest = d.iloc[-1]
@@ -356,3 +415,245 @@ class StrategyEngine:
             htf_bias=htf_bias,
             htf_sr_bias=htf_sr_bias,
         )
+
+    def _preopen_drift_side(self, preopen_df: pd.DataFrame, asia_high: float, asia_low: float, atr_value: float) -> str | None:
+        if preopen_df.empty or len(preopen_df) < 4 or atr_value <= 0:
+            return None
+
+        first_open = float(preopen_df.iloc[0]["open"])
+        last_close = float(preopen_df.iloc[-1]["close"])
+        session_span = max(float(preopen_df["high"].max()) - float(preopen_df["low"].min()), 1e-9)
+        body_ratio = float(preopen_df["body"].mean() / preopen_df["range"].mean()) if float(preopen_df["range"].mean()) > 0 else 1.0
+        drift_ratio = abs(last_close - first_open) / session_span
+        near_high = abs(last_close - asia_high) <= atr_value * 0.45
+        near_low = abs(last_close - asia_low) <= atr_value * 0.45
+
+        if body_ratio > 0.62 or drift_ratio < 0.45:
+            return None
+        if last_close > first_open and near_high:
+            return "up"
+        if last_close < first_open and near_low:
+            return "down"
+        return None
+
+    def _detect_sweep(self, ltf: pd.DataFrame, reference_time: datetime, asia_high: float, asia_low: float, atr_value: float, drift_side: str | None):
+        open_df = self._slice_window_ny(ltf, reference_time, self.cfg.nas100_open_window_ny)
+        if open_df.empty:
+            return None
+
+        tolerance = atr_value * self.cfg.asia_sweep_min_atr
+        candidates: list[dict] = []
+        for idx, row in open_df.iterrows():
+            later = ltf[ltf["time"] >= row["time"]]
+            if float(row["high"]) >= asia_high + tolerance and (later["close"] < asia_high).any():
+                candidates.append(
+                    {
+                        "action": "short",
+                        "sweep_side": "buy_side",
+                        "time": self._ensure_utc(row["time"]),
+                        "extreme": float(row["high"]),
+                    }
+                )
+            if float(row["low"]) <= asia_low - tolerance and (later["close"] > asia_low).any():
+                candidates.append(
+                    {
+                        "action": "long",
+                        "sweep_side": "sell_side",
+                        "time": self._ensure_utc(row["time"]),
+                        "extreme": float(row["low"]),
+                    }
+                )
+
+        if not candidates:
+            return None
+
+        expected_action = None
+        if drift_side == "up":
+            expected_action = "short"
+        elif drift_side == "down":
+            expected_action = "long"
+
+        if expected_action is not None:
+            preferred = [candidate for candidate in candidates if candidate["action"] == expected_action]
+            if preferred:
+                return max(preferred, key=lambda item: item["time"])
+        return max(candidates, key=lambda item: item["time"])
+
+    def _find_cisd_confirmation(self, post_sweep: pd.DataFrame, action: str):
+        for idx in range(2, len(post_sweep)):
+            left = post_sweep.iloc[idx - 2]
+            middle = post_sweep.iloc[idx - 1]
+            current = post_sweep.iloc[idx]
+            atr_value = float(current["atr"]) if float(current["atr"]) > 0 else 0.0
+            tolerance = atr_value * self.cfg.fvg_eq_tolerance_atr
+
+            if action == "short":
+                displacement = float(current["open"]) - float(current["close"])
+                cisd = float(current["close"]) < float(middle["low"]) and displacement >= atr_value * self.cfg.cisd_displacement_atr
+                gap_exists = float(left["low"]) > float(current["high"])
+                if not cisd or not gap_exists:
+                    continue
+                eq = (float(left["low"]) + float(current["high"])) / 2
+                later = post_sweep.iloc[idx + 1:]
+                respected = ((later["high"] >= eq - tolerance) & (later["close"] < eq)).any() if not later.empty else False
+                if respected:
+                    return {
+                        "cisd_time": self._ensure_utc(current["time"]),
+                        "eq": eq,
+                        "fvg_side": "bearish",
+                    }
+            else:
+                displacement = float(current["close"]) - float(current["open"])
+                cisd = float(current["close"]) > float(middle["high"]) and displacement >= atr_value * self.cfg.cisd_displacement_atr
+                gap_exists = float(left["high"]) < float(current["low"])
+                if not cisd or not gap_exists:
+                    continue
+                eq = (float(left["high"]) + float(current["low"])) / 2
+                later = post_sweep.iloc[idx + 1:]
+                respected = ((later["low"] <= eq + tolerance) & (later["close"] > eq)).any() if not later.empty else False
+                if respected:
+                    return {
+                        "cisd_time": self._ensure_utc(current["time"]),
+                        "eq": eq,
+                        "fvg_side": "bullish",
+                    }
+        return None
+
+    def _analyze_nas100_asia_model(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        df_htf: pd.DataFrame | None,
+        df_ltf: pd.DataFrame | None,
+        base_signal: Signal,
+    ) -> Signal | None:
+        if not self.cfg.use_nas100_asia_model or not symbol.startswith("NAS100") or df_ltf is None or df_ltf.empty:
+            return None
+
+        reference_time = self._reference_time(df)
+        if not (
+            self._in_any_window_ny(reference_time, self.cfg.nas100_open_window_ny)
+            or self._in_any_window_ny(reference_time, self.cfg.nas100_macro_windows_ny)
+        ):
+            return None
+
+        ltf = self._prep(df_ltf[df_ltf["time"] <= reference_time].copy())
+        if len(ltf) < 60:
+            return None
+
+        asia_df = self._slice_window_ny(ltf, reference_time, self.cfg.asia_range_ny)
+        preopen_df = self._slice_window_ny(ltf, reference_time, self.cfg.nas100_preopen_window_ny)
+        if asia_df.empty or len(asia_df) < 6:
+            return None
+
+        asia_high = float(asia_df["high"].max())
+        asia_low = float(asia_df["low"].min())
+        asia_width = asia_high - asia_low
+        atr_value = float(base_signal.atr_value) if float(base_signal.atr_value) > 0 else float(ltf.iloc[-1]["atr"])
+        if atr_value <= 0:
+            return None
+
+        if asia_width <= 0 or asia_width > atr_value * self.cfg.asia_range_max_width_atr:
+            return None
+
+        asia_drift = abs(float(asia_df.iloc[-1]["close"]) - float(asia_df.iloc[0]["open"])) / max(asia_width, 1e-9)
+        if asia_drift > self.cfg.asia_range_max_drift_ratio:
+            return None
+
+        drift_side = self._preopen_drift_side(preopen_df, asia_high, asia_low, atr_value)
+        sweep = self._detect_sweep(ltf, reference_time, asia_high, asia_low, atr_value, drift_side)
+        if sweep is None:
+            return None
+
+        post_sweep = ltf[ltf["time"] >= sweep["time"]].copy().reset_index(drop=True)
+        confirmation = self._find_cisd_confirmation(post_sweep, sweep["action"])
+        if confirmation is None:
+            return None
+
+        close_price = float(df.iloc[-1]["close"])
+        target_price = asia_low if sweep["action"] == "short" else asia_high
+        if sweep["action"] == "short" and close_price <= target_price + atr_value * 0.15:
+            return None
+        if sweep["action"] == "long" and close_price >= target_price - atr_value * 0.15:
+            return None
+
+        score = max(self.cfg.mode_threshold() + 2, 5)
+        if sweep["action"] == "short":
+            score *= -1
+
+        confidence = max(base_signal.confidence, self.cfg.asia_model_confidence_floor)
+        confidence += 8
+        if drift_side is not None:
+            confidence += 6
+        confidence += 12
+        confidence += 12
+        if self._in_any_window_ny(reference_time, self.cfg.nas100_macro_windows_ny):
+            confidence += 5
+        if (sweep["action"] == "long" and base_signal.htf_bias > 0) or (sweep["action"] == "short" and base_signal.htf_bias < 0):
+            confidence += 6
+        if base_signal.regime == "volatile":
+            confidence -= 6
+        confidence = max(0, min(100, confidence))
+
+        regime = "trend" if base_signal.regime != "volatile" else "volatile"
+        action = self.determine_action(score, confidence, regime)
+        if action == "hold":
+            return None
+
+        reasons = [
+            "Asia range clean",
+            f"Asia high {asia_high:.2f}",
+            f"Asia low {asia_low:.2f}",
+            f"Pre-open drift {drift_side or 'mixed'}",
+            f"{sweep['sweep_side']} sweep at NY open",
+            f"CISD + {confirmation['fvg_side']} FVG EQ respect",
+            f"Target {('Asia Low' if sweep['action'] == 'short' else 'Asia High')}",
+        ]
+        if self._in_any_window_ny(reference_time, self.cfg.nas100_macro_windows_ny):
+            reasons.append("Macro window active")
+        if (sweep["action"] == "long" and base_signal.htf_bias > 0) or (sweep["action"] == "short" and base_signal.htf_bias < 0):
+            reasons.append("HTF aligned")
+
+        return Signal(
+            symbol=symbol,
+            action=action,
+            score=score,
+            confidence=int(confidence),
+            regime=regime,
+            reason=", ".join(reasons),
+            profile=base_signal.profile,
+            atr_value=atr_value,
+            close_price=close_price,
+            ema_fast=base_signal.ema_fast,
+            ema_slow=base_signal.ema_slow,
+            rsi_value=base_signal.rsi_value,
+            macd_hist=base_signal.macd_hist,
+            volume_ratio=base_signal.volume_ratio,
+            breakout_up=base_signal.breakout_up,
+            breakout_down=base_signal.breakout_down,
+            adx_value=base_signal.adx_value,
+            vwap_value=base_signal.vwap_value,
+            htf_bias=base_signal.htf_bias,
+            htf_sr_bias=base_signal.htf_sr_bias,
+            model="nas100_asia_range",
+            target_price=target_price,
+            target_label="Asia Low" if sweep["action"] == "short" else "Asia High",
+            sweep_side=sweep["sweep_side"],
+            cisd_detected=True,
+            asia_high=asia_high,
+            asia_low=asia_low,
+            first_fvg_side=confirmation["fvg_side"],
+        )
+
+    def analyze(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        df_htf: pd.DataFrame | None = None,
+        df_ltf: pd.DataFrame | None = None,
+    ) -> Signal:
+        base_signal = self._analyze_base(symbol, df, df_htf)
+        asia_signal = self._analyze_nas100_asia_model(symbol, df, df_htf, df_ltf, base_signal)
+        if asia_signal is not None:
+            return asia_signal
+        return base_signal
