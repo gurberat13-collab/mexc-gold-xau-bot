@@ -119,6 +119,8 @@ class ScannerEngine:
         df_ltf = None
         if self.cfg.use_nas100_asia_model and symbol.startswith("NAS100"):
             df_ltf = self.client.get_klines(symbol, self.cfg.nas100_model_timeframe, self.cfg.nas100_model_kline_limit)
+        elif symbol.startswith("XAUT"):
+            df_ltf = self.client.get_klines(symbol, self.cfg.xaut_ltf_timeframe, self.cfg.xaut_ltf_kline_limit)
         snapshot = self.client.get_ticker(symbol)
         signal = self.strategy.analyze(symbol, df, df_htf, df_ltf)
         return df, df_htf, df_ltf, snapshot, signal
