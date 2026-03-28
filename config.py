@@ -8,6 +8,132 @@ from typing import List
 def _getenv_bool(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).lower() == "true"
 
+def _env_float(name: str, default: str, min_val: float = 0.0, max_val: float = float('inf')) -> float:
+    val = float(os.getenv(name, default))
+    return max(min_val, min(val, max_val))
+
+def _env_int(name: str, default: str, min_val: int = 0, max_val: int = 999999) -> int:
+    val = int(os.getenv(name, default))
+    return max(min_val, min(val, max_val))
+
+@dataclass(frozen=True)
+class DrawdownProtectionConfig:
+    tier1_drawdown_pct:    float = 0.05
+    tier1_size_multiplier: float = 0.50
+    tier2_drawdown_pct:    float = 0.10
+    tier2_size_multiplier: float = 0.25
+    max_drawdown_pct:      float = 0.15
+    weekly_loss_limit_pct:  float = 0.12
+    monthly_loss_limit_pct: float = 0.18
+    recovery_mode_enabled:  bool  = True
+    recovery_size_multiplier: float = 0.50
+    recovery_exit_profit_pct: float = 0.03
+
+    @staticmethod
+    def from_env() -> DrawdownProtectionConfig:
+        return DrawdownProtectionConfig(
+            tier1_drawdown_pct=_env_float("TIER1_DRAWDOWN_PCT", "0.05", min_val=0.01, max_val=0.20),
+            tier1_size_multiplier=_env_float("TIER1_SIZE_MULTIPLIER", "0.50", min_val=0.1, max_val=1.0),
+            tier2_drawdown_pct=_env_float("TIER2_DRAWDOWN_PCT", "0.10", min_val=0.03, max_val=0.30),
+            tier2_size_multiplier=_env_float("TIER2_SIZE_MULTIPLIER", "0.25", min_val=0.05, max_val=0.8),
+            max_drawdown_pct=_env_float("MAX_DRAWDOWN_PCT", "0.15", min_val=0.05, max_val=0.40),
+            weekly_loss_limit_pct=_env_float("WEEKLY_LOSS_LIMIT_PCT", "0.12", min_val=0.03, max_val=0.30),
+            monthly_loss_limit_pct=_env_float("MONTHLY_LOSS_LIMIT_PCT", "0.18", min_val=0.05, max_val=0.40),
+            recovery_mode_enabled=_getenv_bool("RECOVERY_MODE_ENABLED", "true"),
+            recovery_size_multiplier=_env_float("RECOVERY_SIZE_MULTIPLIER", "0.50", min_val=0.1, max_val=1.0),
+            recovery_exit_profit_pct=_env_float("RECOVERY_EXIT_PROFIT_PCT", "0.03", min_val=0.01, max_val=0.10),
+        )
+
+@dataclass(frozen=True)
+class KellyCriterionConfig:
+    enabled: bool = True
+    fraction: float = 0.40
+    min_trades_for_calculation: int = 30
+    max_kelly_pct: float = 0.06
+    min_kelly_pct: float = 0.005
+    recalculate_every_n_trades: int = 10
+
+    @staticmethod
+    def from_env() -> KellyCriterionConfig:
+        return KellyCriterionConfig(
+            enabled=_getenv_bool("KELLY_ENABLED", "true"),
+            fraction=_env_float("KELLY_FRACTION", "0.40", min_val=0.1, max_val=1.0),
+            min_trades_for_calculation=_env_int("KELLY_MIN_TRADES", "30", min_val=10, max_val=200),
+            max_kelly_pct=_env_float("KELLY_MAX_PCT", "0.06", min_val=0.01, max_val=0.15),
+            min_kelly_pct=_env_float("KELLY_MIN_PCT", "0.005", min_val=0.001, max_val=0.03),
+            recalculate_every_n_trades=_env_int("KELLY_RECALC_INTERVAL", "10", min_val=5, max_val=50),
+        )
+
+@dataclass(frozen=True)
+class EquityCurveConfig:
+    enabled: bool = True
+    ema_period: int = 20
+    below_ema_multiplier: float = 0.50
+    hard_stop_below_ema_pct: float = 0.05
+    above_ema_bonus: float = 1.0
+
+    @staticmethod
+    def from_env() -> EquityCurveConfig:
+        return EquityCurveConfig(
+            enabled=_getenv_bool("EQUITY_CURVE_ENABLED", "true"),
+            ema_period=_env_int("EQUITY_EMA_PERIOD", "20", min_val=5, max_val=100),
+            below_ema_multiplier=_env_float("EQUITY_BELOW_EMA_MULT", "0.50", min_val=0.1, max_val=1.0),
+            hard_stop_below_ema_pct=_env_float("EQUITY_HARD_STOP_PCT", "0.05", min_val=0.01, max_val=0.15),
+            above_ema_bonus=_env_float("EQUITY_ABOVE_EMA_BONUS", "1.0", min_val=1.0, max_val=1.5),
+        )
+
+@dataclass(frozen=True)
+class PortfolioHeatConfig:
+    max_portfolio_heat_pct: float = 0.06
+    max_same_direction_heat_pct: float = 0.04
+    correlated_pair_max_heat_pct: float = 0.03
+
+    @staticmethod
+    def from_env() -> PortfolioHeatConfig:
+        return PortfolioHeatConfig(
+            max_portfolio_heat_pct=_env_float("MAX_PORTFOLIO_HEAT_PCT", "0.06", min_val=0.02, max_val=0.15),
+            max_same_direction_heat_pct=_env_float("MAX_SAME_DIR_HEAT_PCT", "0.04", min_val=0.01, max_val=0.10),
+            correlated_pair_max_heat_pct=_env_float("CORRELATED_HEAT_PCT", "0.03", min_val=0.01, max_val=0.08),
+        )
+
+@dataclass(frozen=True)
+class ProfitProtectionConfig:
+    enabled: bool = True
+    profit_lock_ratio: float = 0.50
+    min_profit_to_activate_pct: float = 0.05
+    daily_profit_target_pct: float = 0.0
+    weekly_profit_target_pct: float = 0.0
+
+    @staticmethod
+    def from_env() -> ProfitProtectionConfig:
+        return ProfitProtectionConfig(
+            enabled=_getenv_bool("PROFIT_PROTECTION_ENABLED", "true"),
+            profit_lock_ratio=_env_float("PROFIT_LOCK_RATIO", "0.50", min_val=0.1, max_val=0.9),
+            min_profit_to_activate_pct=_env_float("MIN_PROFIT_TO_ACTIVATE_PCT", "0.05", min_val=0.01, max_val=0.20),
+            daily_profit_target_pct=_env_float("DAILY_PROFIT_TARGET_PCT", "0", min_val=0, max_val=0.20),
+            weekly_profit_target_pct=_env_float("WEEKLY_PROFIT_TARGET_PCT", "0", min_val=0, max_val=0.30),
+        )
+
+@dataclass(frozen=True)
+class DynamicLeverageConfig:
+    enabled: bool = True
+    calm_max_leverage: int = 10
+    normal_max_leverage: int = 5
+    volatile_max_leverage: int = 3
+    crisis_max_leverage: int = 1
+    drawdown_leverage_reduction: bool = True
+
+    @staticmethod
+    def from_env() -> DynamicLeverageConfig:
+        return DynamicLeverageConfig(
+            enabled=_getenv_bool("DYNAMIC_LEVERAGE_ENABLED", "true"),
+            calm_max_leverage=_env_int("CALM_MAX_LEVERAGE", "10", min_val=1, max_val=50),
+            normal_max_leverage=_env_int("NORMAL_MAX_LEVERAGE", "5", min_val=1, max_val=30),
+            volatile_max_leverage=_env_int("VOLATILE_MAX_LEVERAGE", "3", min_val=1, max_val=20),
+            crisis_max_leverage=_env_int("CRISIS_MAX_LEVERAGE", "1", min_val=1, max_val=5),
+            drawdown_leverage_reduction=_getenv_bool("DRAWDOWN_LEVERAGE_REDUCTION", "true"),
+        )
+
 
 @dataclass
 class BotConfig:
@@ -118,6 +244,43 @@ class BotConfig:
     xaut_london_range_window:     str   = os.getenv("XAUT_LONDON_RANGE_WINDOW",     "07:00-08:00")
     xaut_london_trade_window:     str   = os.getenv("XAUT_LONDON_TRADE_WINDOW",     "08:00-09:30")
 
+    dynamic_limits_enabled: bool = _getenv_bool("DYNAMIC_LIMITS_ENABLED", "true")
+    vol_regime_low_atr_pct:      float = float(os.getenv("VOL_REGIME_LOW_ATR_PCT",      "0.006"))
+    vol_regime_medium_atr_pct:   float = float(os.getenv("VOL_REGIME_MEDIUM_ATR_PCT",   "0.012"))
+    vol_regime_high_atr_pct:     float = float(os.getenv("VOL_REGIME_HIGH_ATR_PCT",     "0.02"))
+
+    risk_mult_low_vol:           float = float(os.getenv("RISK_MULT_LOW_VOL",           "1.00"))
+    risk_mult_medium_vol:        float = float(os.getenv("RISK_MULT_MEDIUM_VOL",        "0.85"))
+    risk_mult_high_vol:          float = float(os.getenv("RISK_MULT_HIGH_VOL",          "0.60"))
+    risk_mult_extreme_vol:       float = float(os.getenv("RISK_MULT_EXTREME_VOL",       "0.35"))
+
+    leverage_mult_low_vol:       float = float(os.getenv("LEVERAGE_MULT_LOW_VOL",       "1.00"))
+    leverage_mult_medium_vol:    float = float(os.getenv("LEVERAGE_MULT_MEDIUM_VOL",    "0.80"))
+    leverage_mult_high_vol:      float = float(os.getenv("LEVERAGE_MULT_HIGH_VOL",      "0.60"))
+    leverage_mult_extreme_vol:   float = float(os.getenv("LEVERAGE_MULT_EXTREME_VOL",   "0.40"))
+
+    spread_mult_low_vol:         float = float(os.getenv("SPREAD_MULT_LOW_VOL",         "1.00"))
+    spread_mult_medium_vol:      float = float(os.getenv("SPREAD_MULT_MEDIUM_VOL",      "0.90"))
+    spread_mult_high_vol:        float = float(os.getenv("SPREAD_MULT_HIGH_VOL",        "0.75"))
+    spread_mult_extreme_vol:     float = float(os.getenv("SPREAD_MULT_EXTREME_VOL",     "0.50"))
+
+    trades_per_day_mult_low_vol:       float = float(os.getenv("TRADES_PER_DAY_MULT_LOW_VOL",       "1.00"))
+    trades_per_day_mult_medium_vol:    float = float(os.getenv("TRADES_PER_DAY_MULT_MEDIUM_VOL",    "0.85"))
+    trades_per_day_mult_high_vol:      float = float(os.getenv("TRADES_PER_DAY_MULT_HIGH_VOL",      "0.60"))
+    trades_per_day_mult_extreme_vol:   float = float(os.getenv("TRADES_PER_DAY_MULT_EXTREME_VOL",   "0.40"))
+
+    cooldown_mult_low_vol:       float = float(os.getenv("COOLDOWN_MULT_LOW_VOL",       "1.00"))
+    cooldown_mult_medium_vol:    float = float(os.getenv("COOLDOWN_MULT_MEDIUM_VOL",    "1.25"))
+    cooldown_mult_high_vol:      float = float(os.getenv("COOLDOWN_MULT_HIGH_VOL",      "1.75"))
+    cooldown_mult_extreme_vol:   float = float(os.getenv("COOLDOWN_MULT_EXTREME_VOL",   "2.50"))
+
+    stop_mult_low_vol:           float = float(os.getenv("STOP_MULT_LOW_VOL",           "1.00"))
+    stop_mult_medium_vol:        float = float(os.getenv("STOP_MULT_MEDIUM_VOL",        "1.10"))
+    stop_mult_high_vol:          float = float(os.getenv("STOP_MULT_HIGH_VOL",          "1.25"))
+    stop_mult_extreme_vol:       float = float(os.getenv("STOP_MULT_EXTREME_VOL",       "1.50"))
+
+    disable_trading_extreme_vol: bool  = _getenv_bool("DISABLE_TRADING_EXTREME_VOL", "true")
+
     state_path:  str  = os.getenv("STATE_PATH",  "storage/state.json")
     wallet_path: str  = os.getenv("WALLET_PATH", "storage/wallet.json")
     trades_path: str  = os.getenv("TRADES_PATH", "storage/trades.json")
@@ -125,6 +288,14 @@ class BotConfig:
 
     bot_enabled: bool = _getenv_bool("BOT_ENABLED", "true")
     sim_mode:    bool = _getenv_bool("SIM_MODE",    "true")
+
+    # YENİ KURUMSAL RİSK KATMANLARI
+    drawdown:       DrawdownProtectionConfig = field(default_factory=DrawdownProtectionConfig.from_env)
+    kelly:          KellyCriterionConfig     = field(default_factory=KellyCriterionConfig.from_env)
+    equity_curve:   EquityCurveConfig        = field(default_factory=EquityCurveConfig.from_env)
+    portfolio_heat: PortfolioHeatConfig      = field(default_factory=PortfolioHeatConfig.from_env)
+    profit_protection: ProfitProtectionConfig = field(default_factory=ProfitProtectionConfig.from_env)
+    dynamic_leverage:  DynamicLeverageConfig  = field(default_factory=DynamicLeverageConfig.from_env)
 
     def mode_threshold(self) -> int:
         return self.aggressive_score_threshold if self.risk_mode == "aggressive" else self.calm_score_threshold

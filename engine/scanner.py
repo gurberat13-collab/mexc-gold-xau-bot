@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+from engine.dynamic_limits import DynamicLimitManager, compute_atr_pct
+
 
 class ScannerEngine:
     def __init__(self, config, client, strategy, risk_manager, wallet, executor, position_manager, logger, notifier):
@@ -15,6 +17,7 @@ class ScannerEngine:
         self.position_manager = position_manager
         self.logger = logger
         self.notifier = notifier
+        self.dynamic_limit_manager = DynamicLimitManager(config)
         self.running = False
         self.last_trade_time: datetime | None = None
         self.last_daily_summary_sent = None
@@ -29,10 +32,10 @@ class ScannerEngine:
         self.logger.info("Scanner stopped")
         await self.notifier("Bot durduruldu. Yeni islem acmayacak.")
 
-    def in_cooldown(self) -> bool:
+    def in_cooldown(self, cooldown_minutes: int) -> bool:
         if self.last_trade_time is None:
             return False
-        return datetime.now(timezone.utc) < self.last_trade_time + timedelta(minutes=self.cfg.cooldown_minutes)
+        return datetime.now(timezone.utc) < self.last_trade_time + timedelta(minutes=cooldown_minutes)
 
     def _analysis_time(self, df) -> datetime:
         if df is not None and not df.empty and "time" in df:
@@ -171,7 +174,7 @@ class ScannerEngine:
                 await self.notifier(msg)
             return
 
-        if not self.running or self.in_cooldown():
+        if not self.running:
             return
         if self.risk.daily_loss_breached(self.wallet):
             await self.notifier("Gunluk zarar limiti asildi. Bot bugun yeni islem acmayacak.")
@@ -181,14 +184,25 @@ class ScannerEngine:
             await self.notifier("Ust uste stop limiti asildi. Bot durduruldu.")
             self.running = False
             return
-        if not self.wallet.can_open_new_trade(self.cfg.max_open_positions, self.cfg.max_trades_per_day, self.cfg.session_max_trades):
+        if self.wallet.open_position is not None:
             return
 
         best_signal = None
         best_snapshot = None
+        best_limits = None
 
         for symbol in self.cfg.symbols:
             df, _, _, snapshot, signal = await self._analyze_symbol(symbol)
+            latest_atr = float(df.iloc[-1]["atr"]) if float(df.iloc[-1]["atr"]) > 0 else float(snapshot.last_price) * 0.004
+            atr_pct = compute_atr_pct(latest_atr, float(snapshot.last_price))
+            limits = self.dynamic_limit_manager.get_limits(atr_pct)
+
+            if not limits.trading_allowed:
+                continue
+            if self.in_cooldown(limits.cooldown_minutes):
+                continue
+            if not self.wallet.can_open_new_trade(self.cfg.max_open_positions, limits.max_trades_per_day, self.cfg.session_max_trades):
+                continue
             analysis_time = self._analysis_time(df)
             if not self.in_session(symbol, analysis_time):
                 continue
@@ -197,7 +211,7 @@ class ScannerEngine:
             self._apply_session_bonus(symbol, signal, analysis_time)
             if abs(snapshot.funding_rate) > self.cfg.funding_abs_limit:
                 continue
-            if snapshot.spread_pct > self.cfg.max_spread_pct:
+            if snapshot.spread_pct > limits.max_spread_pct:
                 continue
             last_candle_pct = abs((df.iloc[-1]["close"] - df.iloc[-1]["open"]) / df.iloc[-1]["open"])
             if last_candle_pct > self.cfg.max_last_candle_pct:
@@ -207,17 +221,24 @@ class ScannerEngine:
             if best_signal is None or (signal.confidence, abs(signal.score)) > (best_signal.confidence, abs(best_signal.score)):
                 best_signal = signal
                 best_snapshot = snapshot
+                best_limits = limits
 
-        if best_signal and best_snapshot:
+        if best_signal and best_snapshot and best_limits:
             plan = self.risk.build_plan(
                 best_signal.symbol,
                 best_signal.action,
                 best_snapshot.last_price,
                 best_signal.atr_value,
-                self.wallet.balance,
+                self.wallet,
                 best_signal.regime,
+                best_limits,
                 best_signal.confidence,
             )
+            
+            if plan.blocked:
+                self.logger.info(f"Signal rejected by Institutional Risk Engine: {plan.blocked_reason}")
+                return
+
             opened = self.executor.open_position(
                 best_signal.symbol,
                 best_signal.action,

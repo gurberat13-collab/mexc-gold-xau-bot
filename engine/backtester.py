@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from engine.dynamic_limits import DynamicLimitManager, compute_atr_pct
+
 
 @dataclass
 class BacktestResult:
@@ -15,6 +17,30 @@ class BacktestResult:
     win_rate: float
     segments: list[dict[str, Any]]
 
+class MockWallet:
+    def __init__(self, balance: float, starting: float, wins: int, losses: int, req_trades: int):
+        self.balance = balance
+        self.data = {
+            "peak_equity": max(starting, balance), 
+            "equity_history": [starting] * req_trades
+        }
+        self.wins = wins
+        self.losses = losses
+        self.trades = wins + losses
+
+    def performance_summary(self) -> dict[str, Any]:
+        return {
+            "trades": self.trades,
+            "wins": self.wins,
+            "avg_win": 1.0,
+            "avg_loss": -1.0
+        }
+
+    @property
+    def open_position(self) -> dict | None:
+        return None
+
+
 
 class Backtester:
     def __init__(self, config, strategy, risk_manager, scanner):
@@ -22,6 +48,7 @@ class Backtester:
         self.strategy = strategy
         self.risk = risk_manager
         self.scanner = scanner
+        self.dynamic_limit_manager = DynamicLimitManager(config)
 
     def _htf_history_until(self, df_htf, signal_time):
         if df_htf.empty or "time" not in df_htf:
@@ -49,21 +76,31 @@ class Backtester:
             return raw_price - (raw_price * self.cfg.slippage_rate)
         return raw_price + (raw_price * self.cfg.slippage_rate)
 
-    def _simulate_trade(self, symbol: str, signal, future_bars, balance: float) -> dict[str, Any] | None:
+    def _simulate_trade(self, symbol: str, signal, future_bars, wallet: MockWallet) -> dict[str, Any] | None:
         horizon = future_bars.iloc[: self.cfg.backtest_max_hold_bars].copy()
         if horizon.empty:
             return None
 
         entry_price = float(horizon.iloc[0]["open"])
+        atr_pct = compute_atr_pct(float(signal.atr_value), entry_price)
+        limits = self.dynamic_limit_manager.get_limits(atr_pct)
+
+        if not limits.trading_allowed:
+            return None
+
         plan = self.risk.build_plan(
             symbol,
             signal.action,
             entry_price,
             signal.atr_value,
-            balance,
+            wallet,
             signal.regime,
+            limits,
             signal.confidence,
         )
+        if plan.blocked:
+            return None
+            
         quantity = float(plan.quantity)
         if quantity <= 0:
             return None
@@ -220,7 +257,14 @@ class Backtester:
                 i += 1
                 continue
 
-            result = self._simulate_trade(symbol, signal, df.iloc[i:], balance)
+            wallet = MockWallet(
+                balance=balance, 
+                starting=starting_balance, 
+                wins=wins, 
+                losses=losses, 
+                req_trades=self.cfg.equity_curve.ema_period
+            )
+            result = self._simulate_trade(symbol, signal, df.iloc[i:], wallet)
             if result is None:
                 holds += 1
                 i += 1

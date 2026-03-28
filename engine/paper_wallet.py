@@ -55,6 +55,7 @@ class PaperWallet:
                 "day": datetime.now(timezone.utc).date().isoformat(),
                 "open_position": None,
                 "history": [],
+                "equity_history": [starting_balance],
                 "last_summary_day": None,
             },
         )
@@ -210,6 +211,9 @@ class PaperWallet:
             float(self.data.get("peak_equity", self.starting_balance)),
             float(self.data["equity"]),
         )
+        eh = self.data.get("equity_history", [])
+        eh.append(float(self.data["equity"]))
+        self.data["equity_history"] = eh[-200:]
         self.save()
         return trade
 

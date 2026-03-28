@@ -24,7 +24,8 @@ class TelegramController:
             ("analiz", self.analiz_cmd), ("ayar", self.ayar_cmd), ("pozisyon", self.pozisyon_cmd),
             ("rapor", self.rapor_cmd), ("sonislem", self.sonislem_cmd), ("aciklama", self.aciklama_cmd),
             ("seans", self.seans_cmd), ("riskayar", self.riskayar_cmd), ("backtest", self.backtest_cmd),
-            ("mod", self.mod_cmd), ("sessiz", self.sessiz_cmd),
+            ("mod", self.mod_cmd), ("sessiz", self.sessiz_cmd), ("limit", self.limit_cmd),
+            ("kurumsal", self.kurumsal_cmd),
         ]:
             self.app.add_handler(CommandHandler(name, fn))
 
@@ -62,7 +63,8 @@ class TelegramController:
             "/baslat /durdur /durum /pozisyon /bakiye /gecmis\n"
             "/analiz /analiz XAUT /analiz NAS100\n"
             "/rapor /sonislem /aciklama /seans /riskayar /backtest XAUT\n"
-            "/mod agresif veya /mod sakin"
+            "/mod agresif veya /mod sakin\n"
+            "/limit veya /limit XAUT"
         )
         await update.message.reply_text(text)
 
@@ -277,6 +279,73 @@ class TelegramController:
             f"Threshold: {self.cfg.mode_threshold()}"
         )
         await update.message.reply_text(text)
+
+    async def limit_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not context.args:
+            symbols = self.cfg.symbols
+        else:
+            raw = context.args[0].upper().replace("USDT", "").replace("/", "").strip()
+            alias_map = {
+                "XAUT": "XAUT_USDT", "XAU": "XAUT_USDT", "GOLD": "XAUT_USDT",
+                "NAS100": "NAS100_USDT", "NASDAQ": "NAS100_USDT",
+            }
+            symbols = [alias_map.get(raw, f"{raw}_USDT" if "USDT" not in raw else raw)]
+            
+        results = []
+        from engine.dynamic_limits import compute_atr_pct
+        for symbol in symbols:
+            try:
+                df = self.client.get_klines(symbol, self.cfg.primary_timeframe, 100)
+                snapshot = self.client.get_ticker(symbol)
+                latest_atr = float(df.iloc[-1]["atr"]) if float(df.iloc[-1]["atr"]) > 0 else float(snapshot.last_price) * 0.004
+                atr_pct = compute_atr_pct(latest_atr, float(snapshot.last_price))
+                limits = self.scanner.dynamic_limit_manager.get_limits(atr_pct)
+                
+                txt = (
+                    f"🌡️ {symbol} Dinamik Limitler\n"
+                    f"Piyasa Rejimi: {limits.regime.upper()}\n"
+                    f"Güncel ATR: %{atr_pct*100:.3f}\n"
+                    f"İşlem İzni: {'✅ AKTİF' if limits.trading_allowed else '⛔ AŞIRI VOLATİL, KAPALI'}\n"
+                    f"Risk/İşlem: %{limits.risk_per_trade*100:.2f}\n"
+                    f"Kaldıraç: {limits.leverage}x\n"
+                    f"Spread Tolerans: %{limits.max_spread_pct*100:.3f}\n"
+                    f"Max İşlem/Gün: {limits.max_trades_per_day}\n"
+                    f"Max Stop Çarpanı: {limits.atr_stop_mult:.2f}x\n"
+                    f"Bekleme Süresi: {limits.cooldown_minutes} dk"
+                )
+                results.append(txt)
+            except Exception as exc:
+                results.append(f"❌ {symbol} limit verisi alınamadı: {exc}")
+                
+        await update.message.reply_text("\n\n━━━━━━━━━━━━━━━━━━\n\n".join(results))
+
+    async def kurumsal_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            mode_risk = self.cfg.risk_per_trade if self.cfg.risk_mode == "aggressive" else max(0.0125, self.cfg.risk_per_trade * 0.6)
+            base_risk_pct, kelly_msg = self.risk.calculate_kelly(self.wallet, mode_risk)
+            dd_mult, dd_msg = self.risk.get_drawdown_multiplier(self.wallet)
+            eq_mult, eq_msg = self.risk.get_equity_curve_multiplier(self.wallet)
+            profit_ok, profit_msg = self.risk.check_profit_protection(self.wallet)
+            
+            txt = (
+                "🏢 KURUMSAL RISK MOTORU DURUMU\n\n"
+                f"1️⃣ Kelly Criterion\n"
+                f"• {kelly_msg}\n"
+                f"• İşlem Başı Temel Risk: %{base_risk_pct*100:.2f}\n\n"
+                f"2️⃣ Drawdown Koruması\n"
+                f"• {dd_msg}\n"
+                f"• Boyut Çarpanı: x{dd_mult}\n\n"
+                f"3️⃣ Equity Curve Serisi (EMA)\n"
+                f"• {eq_msg}\n"
+                f"• Boyut Çarpanı: x{eq_mult}\n\n"
+                f"4️⃣ Kâr Kilidi (Profit Lock)\n"
+                f"• Durum: {'✅ Korumada' if profit_ok else '⛔ Durduruldu'}\n"
+                f"• Detay: {profit_msg}\n\n"
+                f"🔥 Kombine Risk Çarpanı: x{dd_mult * eq_mult:.2f}"
+            )
+            await update.message.reply_text(txt)
+        except Exception as e:
+            await update.message.reply_text(f"Hata: {e}")
 
     async def ayar_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = (
