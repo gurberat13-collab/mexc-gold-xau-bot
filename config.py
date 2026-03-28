@@ -26,7 +26,8 @@ class BotConfig:
 
     starting_balance:       float = float(os.getenv("STARTING_BALANCE",    "1000"))
     leverage:               int   = int(os.getenv("LEVERAGE",              "5"))
-    risk_per_trade:         float = float(os.getenv("RISK_PER_TRADE",      "0.03"))
+    risk_per_trade:         float = float(os.getenv("RISK_PER_TRADE",      "0.01"))
+    min_stop_distance_pct:  float = float(os.getenv("MIN_STOP_DISTANCE_PCT", "0.0008"))
     daily_loss_limit_pct:   float = float(os.getenv("DAILY_LOSS_LIMIT_PCT","0.08"))
     max_consecutive_losses: int   = int(os.getenv("MAX_CONSECUTIVE_LOSSES","3"))
     max_open_positions:     int   = int(os.getenv("MAX_OPEN_POSITIONS",    "1"))
@@ -49,9 +50,9 @@ class BotConfig:
     secondary_partial_close_ratio:   float = float(os.getenv("SECONDARY_PARTIAL_CLOSE_RATIO",   "0.25"))
     time_stop_minutes:       int   = int(os.getenv("TIME_STOP_MINUTES",     "180"))
 
-    aggressive_score_threshold: int   = int(os.getenv("AGGRESSIVE_SCORE_THRESHOLD", "3"))
+    aggressive_score_threshold: int   = int(os.getenv("AGGRESSIVE_SCORE_THRESHOLD", "4"))
     calm_score_threshold:       int   = int(os.getenv("CALM_SCORE_THRESHOLD",       "3"))
-    confidence_min_aggressive:  int   = int(os.getenv("CONFIDENCE_MIN_AGGRESSIVE",  "48"))
+    confidence_min_aggressive:  int   = int(os.getenv("CONFIDENCE_MIN_AGGRESSIVE",  "55"))
     confidence_min_calm:        int   = int(os.getenv("CONFIDENCE_MIN_CALM",        "58"))
     risk_mode:                  str   = os.getenv("RISK_MODE", "aggressive").lower()
 

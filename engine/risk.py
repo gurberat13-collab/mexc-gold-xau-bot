@@ -93,7 +93,7 @@ class RiskManager:
 
         base_stop_mult = self.cfg.atr_stop_mult if self.cfg.risk_mode == "aggressive" else self.cfg.atr_stop_mult * 1.12
         stop_mult = base_stop_mult * self.regime_stop_multiplier(regime)
-        stop_distance = max(atr_value * stop_mult, entry_price * 0.0032)
+        stop_distance = max(atr_value * stop_mult, entry_price * self.cfg.min_stop_distance_pct)
         rr_ratio = self.regime_rr_ratio(regime, confidence)
 
         if side == "long":
