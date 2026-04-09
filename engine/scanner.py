@@ -193,7 +193,7 @@ class ScannerEngine:
 
         for symbol in self.cfg.symbols:
             df, _, _, snapshot, signal = await self._analyze_symbol(symbol)
-            latest_atr = float(df.iloc[-1]["atr"]) if float(df.iloc[-1]["atr"]) > 0 else float(snapshot.last_price) * 0.004
+            latest_atr = float(signal.atr_value) if float(signal.atr_value) > 0 else float(snapshot.last_price) * 0.004
             atr_pct = compute_atr_pct(latest_atr, float(snapshot.last_price))
             limits = self.dynamic_limit_manager.get_limits(atr_pct)
 

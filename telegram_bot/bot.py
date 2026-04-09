@@ -5,6 +5,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from engine.backtester import Backtester
+from utils.indicators import atr
 
 
 class TelegramController:
@@ -297,7 +298,8 @@ class TelegramController:
             try:
                 df = self.client.get_klines(symbol, self.cfg.primary_timeframe, 100)
                 snapshot = self.client.get_ticker(symbol)
-                latest_atr = float(df.iloc[-1]["atr"]) if float(df.iloc[-1]["atr"]) > 0 else float(snapshot.last_price) * 0.004
+                latest_atr_series = atr(df, self.cfg.atr_period)
+                latest_atr = float(latest_atr_series.iloc[-1]) if not latest_atr_series.empty and float(latest_atr_series.iloc[-1]) > 0 else float(snapshot.last_price) * 0.004
                 atr_pct = compute_atr_pct(latest_atr, float(snapshot.last_price))
                 limits = self.scanner.dynamic_limit_manager.get_limits(atr_pct)
                 

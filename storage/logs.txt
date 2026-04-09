@@ -1,0 +1,29 @@
+2026-04-09 21:34:27,567 | WARNING | TELEGRAM_TOKEN yok. Sadece terminal/log ile calisacak.
+2026-04-09 21:34:27,567 | INFO | Scanner started
+2026-04-09 21:34:31,044 | ERROR | Tick error: 'atr'
+Traceback (most recent call last):
+  File "C:\Users\berat\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pandas\core\indexes\base.py", line 3641, in get_loc
+    return self._engine.get_loc(casted_key)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "pandas/_libs/index.pyx", line 168, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas/_libs/index.pyx", line 197, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas/_libs/hashtable_class_helper.pxi", line 7668, in pandas._libs.hashtable.PyObjectHashTable.get_item
+  File "pandas/_libs/hashtable_class_helper.pxi", line 7676, in pandas._libs.hashtable.PyObjectHashTable.get_item
+KeyError: 'atr'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\berat\Documents\GitHub\mexc-gold-xau-bot\engine\scanner.py", line 270, in run_forever
+    await self.tick()
+  File "C:\Users\berat\Documents\GitHub\mexc-gold-xau-bot\engine\scanner.py", line 196, in tick
+    latest_atr = float(df.iloc[-1]["atr"]) if float(df.iloc[-1]["atr"]) > 0 else float(snapshot.last_price) * 0.004
+                                                    ~~~~~~~~~~~^^^^^^^
+  File "C:\Users\berat\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pandas\core\series.py", line 959, in __getitem__
+    return self._get_value(key)
+           ~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\berat\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pandas\core\series.py", line 1046, in _get_value
+    loc = self.index.get_loc(label)
+  File "C:\Users\berat\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pandas\core\indexes\base.py", line 3648, in get_loc
+    raise KeyError(key) from err
+KeyError: 'atr'
